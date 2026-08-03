@@ -272,4 +272,55 @@ void main() {
     expect(saved?.totp?.digits, 8);
     expect(saved?.totp?.period, 60);
   });
+
+  testWidgets('编辑页扫描 TOTP 二维码后自动填充配置', (tester) async {
+    Account? saved;
+    var scanCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditPage(
+          accountSaver: (account, _) async => saved = account,
+          totpQrScanner: (_) async {
+            scanCount++;
+            return 'otpauth://totp/Acme:bob%40example.com'
+                '?secret=JBSWY3DPEHPK3PXP&issuer=Acme'
+                '&algorithm=SHA512&digits=8&period=60';
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('动态验证码（TOTP）'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('扫描二维码'));
+    await tester.pumpAndSettle();
+
+    expect(scanCount, 1);
+    expect(find.widgetWithText(TextField, 'Acme'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'bob@example.com'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved?.totp?.issuer, 'Acme');
+    expect(saved?.totp?.accountName, 'bob@example.com');
+    expect(saved?.totp?.algorithm, TotpAlgorithm.sha512);
+    expect(saved?.totp?.digits, 8);
+    expect(saved?.totp?.period, 60);
+  });
+
+  testWidgets('编辑页拒绝非 TOTP 二维码', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditPage(totpQrScanner: (_) async => 'https://example.com'),
+      ),
+    );
+
+    await tester.tap(find.text('动态验证码（TOTP）'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('扫描二维码'));
+    await tester.pump();
+
+    expect(find.text('未识别到有效的 TOTP 二维码'), findsOneWidget);
+  });
 }

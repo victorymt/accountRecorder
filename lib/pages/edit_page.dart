@@ -2,14 +2,22 @@ import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
 import '../totp/totp_service.dart';
+import 'totp_scanner_page.dart';
 
 typedef AccountSaver = Future<void> Function(Account account, bool isEdit);
+typedef TotpQrScanner = Future<String?> Function(BuildContext context);
 
 class EditPage extends StatefulWidget {
-  const EditPage({super.key, this.account, this.accountSaver});
+  const EditPage({
+    super.key,
+    this.account,
+    this.accountSaver,
+    this.totpQrScanner,
+  });
 
   final Account? account;
   final AccountSaver? accountSaver;
+  final TotpQrScanner? totpQrScanner;
 
   @override
   State<EditPage> createState() => _EditPageState();
@@ -42,6 +50,10 @@ class _EditPageState extends State<EditPage> {
     } on FormatException {
       return;
     }
+    _applyTotpConfig(config);
+  }
+
+  void _applyTotpConfig(TotpConfig config) {
     if (_titleController.text.trim().isEmpty) {
       _titleController.text = config.issuer.isEmpty
           ? config.accountName
@@ -57,6 +69,27 @@ class _EditPageState extends State<EditPage> {
       _totpIssuer = config.issuer;
       _totpAccountName = config.accountName;
     });
+  }
+
+  Future<void> _scanTotpQrCode() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final scanner = widget.totpQrScanner;
+    final value = scanner != null
+        ? await scanner(context)
+        : await Navigator.of(context).push<String>(
+            MaterialPageRoute(builder: (_) => const TotpScannerPage()),
+          );
+    if (!mounted || value == null) return;
+
+    TotpConfig config;
+    try {
+      config = TotpConfig.fromUri(value);
+    } on FormatException {
+      _showError('未识别到有效的 TOTP 二维码');
+      return;
+    }
+    _totpInputController.text = value;
+    _applyTotpConfig(config);
   }
 
   @override
@@ -273,14 +306,27 @@ class _EditPageState extends State<EditPage> {
                   labelText: 'TOTP 密钥或地址',
                   hintText: 'Base32 / otpauth://',
                   border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    tooltip: _totpObscure ? '显示密钥' : '隐藏密钥',
-                    onPressed: _saving
-                        ? null
-                        : () => setState(() => _totpObscure = !_totpObscure),
-                    icon: Icon(
-                      _totpObscure ? Icons.visibility_off : Icons.visibility,
-                    ),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: '扫描二维码',
+                        onPressed: _saving ? null : _scanTotpQrCode,
+                        icon: const Icon(Icons.qr_code_scanner),
+                      ),
+                      IconButton(
+                        tooltip: _totpObscure ? '显示密钥' : '隐藏密钥',
+                        onPressed: _saving
+                            ? null
+                            : () =>
+                                  setState(() => _totpObscure = !_totpObscure),
+                        icon: Icon(
+                          _totpObscure
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
