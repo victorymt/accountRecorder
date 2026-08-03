@@ -1,21 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 import '../app_lock.dart';
 import '../backup/encrypted_vault_backup.dart';
 import '../db/database_helper.dart';
 import '../import/accountbox_importer.dart';
-import '../security/biometric_vault.dart';
 import '../security/sensitive_clipboard.dart';
 import '../widgets/backup_password_dialog.dart';
 import 'account_detail_page.dart';
 import 'edit_page.dart';
+import 'security_settings_page.dart';
 
 typedef AccountLoader =
     Future<List<Account>> Function(String query, {String? tag});
@@ -30,7 +31,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-enum _HomeAction { import, exportBackup, restoreBackup, biometric, lock }
+enum _HomeAction { import, exportBackup, restoreBackup, security, lock }
 
 enum _AccountAction { copyPassword, edit, delete }
 
@@ -657,64 +658,14 @@ class _HomePageState extends State<HomePage> {
       case _HomeAction.restoreBackup:
         _restoreEncryptedBackup();
         break;
-      case _HomeAction.biometric:
-        _configureBiometric();
+      case _HomeAction.security:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(builder: (_) => const SecuritySettingsPage()),
+        );
         break;
       case _HomeAction.lock:
         widget.onLock?.call();
         break;
-    }
-  }
-
-  Future<void> _configureBiometric() async {
-    final enabled = await BiometricVault.isEnabled();
-    if (!mounted) return;
-    if (enabled) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('关闭指纹解锁？'),
-          content: const Text('关闭后需要使用主密码解锁账号本子。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('关闭'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-      await BiometricVault.disable();
-      _showMessage('指纹解锁已关闭');
-      return;
-    }
-
-    if (!await BiometricVault.isAvailable()) {
-      _showMessage('请先在系统设置中录入可用指纹');
-      return;
-    }
-    final key = DatabaseHelper.instance.copyVaultKey();
-    if (key == null) {
-      _showMessage('密码库已锁定，请重新解锁后设置');
-      return;
-    }
-    AppLock.pickerActive = true;
-    try {
-      await BiometricVault.enable(key);
-      _showMessage('指纹解锁已启用');
-    } on PlatformException catch (error) {
-      if (error.code != 'auth_canceled') {
-        _showMessage('指纹解锁启用失败，请重试');
-      }
-    } catch (_) {
-      _showMessage('指纹解锁启用失败，请重试');
-    } finally {
-      AppLock.pickerActive = false;
-      key.fillRange(0, key.length, 0);
     }
   }
 
@@ -742,9 +693,9 @@ class _HomePageState extends State<HomePage> {
               onTap: () => Navigator.of(context).pop(_HomeAction.import),
             ),
             ListTile(
-              leading: const Icon(Icons.fingerprint),
-              title: const Text('指纹解锁设置'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.biometric),
+              leading: const Icon(Icons.security_outlined),
+              title: const Text('安全设置'),
+              onTap: () => Navigator.of(context).pop(_HomeAction.security),
             ),
             ListTile(
               leading: const Icon(Icons.lock_outline),
@@ -932,11 +883,11 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     PopupMenuItem(
-                      value: _HomeAction.biometric,
+                      value: _HomeAction.security,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.fingerprint),
-                        title: Text('指纹解锁设置'),
+                        leading: Icon(Icons.security_outlined),
+                        title: Text('安全设置'),
                       ),
                     ),
                     PopupMenuItem(

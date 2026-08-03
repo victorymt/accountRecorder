@@ -148,6 +148,91 @@ void main() {
     timeout: const Timeout(Duration(minutes: 3)),
   );
 
+  test(
+    '修改主密码只重新包装 Vault Key 且错误密码不改动元数据',
+    () async {
+      final path =
+          '/tmp/account_book_password_change_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
+      addTearDown(() => databaseFactory.deleteDatabase(path));
+      const oldPassword = 'OldVaultPass123';
+      const newPassword = 'NewVaultPass456';
+
+      final creator = DatabaseHelper.forTesting(path);
+      final initialKey = await creator.setupMasterPassword(oldPassword);
+      initialKey.fillRange(0, initialKey.length, 0);
+      await creator.insertAccount(
+        Account(
+          title: '密码修改测试',
+          username: 'change-user',
+          password: 'unchanged-secret',
+          extra: '密文不应重写',
+          tags: const ['安全'],
+        ),
+      );
+      await creator.close();
+
+      var raw = await databaseFactory.openDatabase(path);
+      final metadataBefore = await _vaultMetadata(raw);
+      final payloadBefore = await _encryptedPayloads(raw);
+      await raw.close();
+
+      final changer = DatabaseHelper.forTesting(path);
+      final unlockedKey = await changer.unlock(oldPassword);
+      expect(unlockedKey, hasLength(32));
+      unlockedKey?.fillRange(0, unlockedKey.length, 0);
+      expect(
+        await changer.changeMasterPassword('WrongCurrentPass', newPassword),
+        isFalse,
+      );
+      await changer.close();
+
+      raw = await databaseFactory.openDatabase(path);
+      expect(await _vaultMetadata(raw), metadataBefore);
+      expect(await _encryptedPayloads(raw), payloadBefore);
+      await raw.close();
+
+      final verifiedChanger = DatabaseHelper.forTesting(path);
+      final verifiedOldKey = await verifiedChanger.unlock(oldPassword);
+      expect(verifiedOldKey, hasLength(32));
+      verifiedOldKey?.fillRange(0, verifiedOldKey.length, 0);
+      expect(
+        await verifiedChanger.changeMasterPassword(oldPassword, newPassword),
+        isTrue,
+      );
+      final stillReadable = await verifiedChanger.listAccounts('密码修改');
+      expect(stillReadable.single.username, 'change-user');
+      expect(stillReadable.single.password, 'unchanged-secret');
+      await verifiedChanger.close();
+
+      raw = await databaseFactory.openDatabase(path);
+      final metadataAfter = await _vaultMetadata(raw);
+      expect(
+        metadataAfter['wrapped_vault_key'],
+        isNot(metadataBefore['wrapped_vault_key']),
+      );
+      expect(
+        metadataAfter['vault_kdf_salt'],
+        isNot(metadataBefore['vault_kdf_salt']),
+      );
+      expect(await _encryptedPayloads(raw), payloadBefore);
+      await raw.close();
+
+      final oldPasswordAttempt = DatabaseHelper.forTesting(path);
+      expect(await oldPasswordAttempt.unlock(oldPassword), isNull);
+      await oldPasswordAttempt.close();
+
+      final newPasswordAttempt = DatabaseHelper.forTesting(path);
+      final newKey = await newPasswordAttempt.unlock(newPassword);
+      expect(newKey, hasLength(32));
+      newKey?.fillRange(0, newKey.length, 0);
+      final persisted = await newPasswordAttempt.listAccounts('');
+      expect(persisted.single.title, '密码修改测试');
+      expect(persisted.single.extra, '密文不应重写');
+      await newPasswordAttempt.close();
+    },
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+
   test('恢复账号使用单一事务，写入失败时保留原 Vault', () async {
     final path =
         '/tmp/account_book_restore_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
@@ -293,4 +378,14 @@ Future<Set<String>> _tableNames(Database db) async {
 Future<String?> _metaValue(Database db, String key) async {
   final rows = await db.query('meta', where: 'key = ?', whereArgs: [key]);
   return rows.isEmpty ? null : rows.single['value'] as String;
+}
+
+Future<Map<String, String>> _vaultMetadata(Database db) async {
+  final rows = await db.query('meta', orderBy: 'key ASC');
+  return {for (final row in rows) row['key'] as String: row['value'] as String};
+}
+
+Future<List<String>> _encryptedPayloads(Database db) async {
+  final rows = await db.query('vault_items', orderBy: 'id ASC');
+  return rows.map((row) => row['encrypted_payload'] as String).toList();
 }

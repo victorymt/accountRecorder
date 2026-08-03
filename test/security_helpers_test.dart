@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:account_book/db/database_helper.dart';
 import 'package:account_book/security/sensitive_clipboard.dart';
+import 'package:account_book/settings/app_settings.dart';
 
 void main() {
   test('账号身份由名称和账号共同确定', () {
@@ -49,5 +50,23 @@ void main() {
     clipboard = '用户后来复制的内容';
     await tester.pump(const Duration(seconds: 5));
     expect(clipboard, '用户后来复制的内容');
+  });
+
+  testWidgets('敏感剪贴板使用当前配置的清除时间', (tester) async {
+    final settings = AppSettings.instance;
+    final previousDelay = settings.clipboardClearDelay;
+    settings.clipboardClearDelay = const Duration(seconds: 15);
+    addTearDown(() => settings.clipboardClearDelay = previousDelay);
+
+    String? clipboard;
+    await SensitiveClipboard.copy(
+      'configured-secret',
+      read: () async => clipboard,
+      write: (value) async => clipboard = value,
+    );
+    await tester.pump(const Duration(seconds: 14));
+    expect(clipboard, 'configured-secret');
+    await tester.pump(const Duration(seconds: 1));
+    expect(clipboard, '');
   });
 }

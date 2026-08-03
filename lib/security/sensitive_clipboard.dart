@@ -2,24 +2,29 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../settings/app_settings.dart';
+
 typedef ClipboardReader = Future<String?> Function();
 typedef ClipboardWriter = Future<void> Function(String value);
 
 class SensitiveClipboard {
   SensitiveClipboard._();
 
-  static const Duration defaultClearAfter = Duration(seconds: 30);
+  static Duration get defaultClearAfter =>
+      AppSettings.instance.clipboardClearDelay;
 
   static Future<void> copy(
     String value, {
-    Duration clearAfter = defaultClearAfter,
+    Duration? clearAfter,
     ClipboardReader? read,
     ClipboardWriter? write,
   }) async {
     final reader = read ?? _readSystemClipboard;
     final writer = write ?? _writeSystemClipboard;
     await writer(value);
-    unawaited(_clearIfUnchanged(value, clearAfter, reader, writer));
+    unawaited(
+      _clearIfUnchanged(value, clearAfter ?? defaultClearAfter, reader, writer),
+    );
   }
 
   static Future<void> _clearIfUnchanged(

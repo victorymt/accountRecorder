@@ -6,9 +6,11 @@ import 'package:flutter/services.dart';
 import 'app_lock.dart';
 import 'db/database_helper.dart';
 import 'pages/unlock_page.dart';
+import 'settings/app_settings.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppSettings.instance.load();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Color(0xFF00965E),
@@ -30,8 +32,6 @@ class AccountBookApp extends StatefulWidget {
 
 class _AccountBookAppState extends State<AccountBookApp>
     with WidgetsBindingObserver {
-  static const _backgroundLockDelay = Duration(seconds: 30);
-
   final _navigatorKey = GlobalKey<NavigatorState>();
   Timer? _lockTimer;
   DateTime? _backgroundedAt;
@@ -72,7 +72,7 @@ class _AccountBookAppState extends State<AccountBookApp>
     if (_locking || AppLock.pickerActive || _backgroundedAt != null) return;
     _backgroundedAt = DateTime.now();
     _lockTimer?.cancel();
-    _lockTimer = Timer(_backgroundLockDelay, () {
+    _lockTimer = Timer(AppSettings.instance.backgroundLockDelay, () {
       if (_backgroundedAt != null && !AppLock.pickerActive) {
         _lock();
       }
@@ -85,7 +85,8 @@ class _AccountBookAppState extends State<AccountBookApp>
     _lockTimer = null;
     _backgroundedAt = null;
     if (backgroundedAt != null &&
-        DateTime.now().difference(backgroundedAt) >= _backgroundLockDelay &&
+        DateTime.now().difference(backgroundedAt) >=
+            AppSettings.instance.backgroundLockDelay &&
         !AppLock.pickerActive) {
       _lock();
     }

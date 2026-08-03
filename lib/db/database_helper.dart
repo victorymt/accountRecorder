@@ -241,6 +241,81 @@ class DatabaseHelper {
     return key == null ? null : Uint8List.fromList(key);
   }
 
+  Future<bool> changeMasterPassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
+    if (newPassword.length < 8) {
+      throw ArgumentError.value(newPassword, 'newPassword');
+    }
+    final activeKey = _vaultKey;
+    if (activeKey == null) {
+      throw StateError('Vault is locked');
+    }
+    final db = await database;
+    final wrappedKey = await _readMeta(db, _wrappedVaultKey);
+    final salt = await _readMeta(db, _vaultKdfSaltKey);
+    final rawIterations = await _readMeta(db, _vaultKdfIterationsKey);
+    final formatVersion = await _readMeta(db, _vaultFormatVersionKey);
+    final iterations = int.tryParse(rawIterations ?? '');
+    if (wrappedKey == null ||
+        salt == null ||
+        formatVersion != '1' ||
+        iterations == null ||
+        iterations < 10000 ||
+        iterations > 2000000) {
+      throw StateError('Invalid Vault metadata');
+    }
+
+    final vaultKeyCopy = Uint8List.fromList(activeKey);
+    Uint8List? currentWrappingKey;
+    Uint8List? unwrappedKey;
+    Uint8List? newWrappingKey;
+    try {
+      currentWrappingKey = await _deriveKey(currentPassword, salt, iterations);
+      try {
+        unwrappedKey = CryptoHelper.decryptBytes(
+          wrappedKey,
+          currentWrappingKey,
+          associatedData: _vaultKeyAssociatedData,
+        );
+      } catch (_) {
+        return false;
+      }
+      if (!_constantTimeBytesEqual(unwrappedKey, vaultKeyCopy)) return false;
+
+      final newSalt = CryptoHelper.randomSalt();
+      newWrappingKey = await _deriveKey(
+        newPassword,
+        newSalt,
+        CryptoHelper.vaultKdfIterations,
+      );
+      final newWrappedKey = CryptoHelper.encryptBytes(
+        vaultKeyCopy,
+        newWrappingKey,
+        associatedData: _vaultKeyAssociatedData,
+      );
+      await db.transaction((txn) async {
+        await _writeVaultMetadata(txn, newSalt, newWrappedKey);
+        await txn.delete(
+          'meta',
+          where: 'key IN (?, ?, ?)',
+          whereArgs: [
+            _failedUnlockCountKey,
+            _lastFailedUnlockKey,
+            _unlockBlockedUntilKey,
+          ],
+        );
+      });
+      return true;
+    } finally {
+      _wipeBytes(currentWrappingKey);
+      _wipeBytes(unwrappedKey);
+      _wipeBytes(newWrappingKey);
+      _wipeBytes(vaultKeyCopy);
+    }
+  }
+
   Future<Uint8List?> _unlockCurrentVault(
     Database db,
     String password,
@@ -981,6 +1056,15 @@ List<String> _extractLegacyTags(String extra) {
 
 void _wipeBytes(Uint8List? bytes) {
   bytes?.fillRange(0, bytes.length, 0);
+}
+
+bool _constantTimeBytesEqual(Uint8List left, Uint8List right) {
+  if (left.length != right.length) return false;
+  var difference = 0;
+  for (var index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference == 0;
 }
 
 void _wipeAccount(Account account) {
