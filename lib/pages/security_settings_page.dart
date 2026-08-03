@@ -188,12 +188,6 @@ class _SecuritySettingsPageState extends State<SecuritySettingsPage> {
     );
   }
 
-  String _durationLabel(Duration duration) {
-    if (duration == Duration.zero) return '立即';
-    if (duration.inSeconds < 60) return '${duration.inSeconds} 秒';
-    return '${duration.inMinutes} 分钟';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -226,7 +220,7 @@ class _SecuritySettingsPageState extends State<SecuritySettingsPage> {
             value: _backgroundLockDelay,
             options: AppSettings.backgroundLockOptions,
             enabled: !_settingsSaving,
-            labelBuilder: _durationLabel,
+            labelBuilder: AppSettings.durationLabel,
             onChanged: _setBackgroundLockDelay,
           ),
           const Divider(height: 1, indent: 56),
@@ -236,7 +230,7 @@ class _SecuritySettingsPageState extends State<SecuritySettingsPage> {
             value: _clipboardClearDelay,
             options: AppSettings.clipboardClearOptions,
             enabled: !_settingsSaving,
-            labelBuilder: _durationLabel,
+            labelBuilder: AppSettings.durationLabel,
             onChanged: _setClipboardClearDelay,
           ),
         ],

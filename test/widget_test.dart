@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:account_book/db/database_helper.dart';
+import 'package:account_book/pages/account_detail_page.dart';
 import 'package:account_book/pages/edit_page.dart';
 import 'package:account_book/pages/home_page.dart';
+import 'package:account_book/settings/app_settings.dart';
 
 void main() {
   final accounts = [
@@ -127,6 +129,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(locked, isTrue);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('详情页复制提示使用当前剪贴板清除时间', (tester) async {
+    final settings = AppSettings.instance;
+    final previousClipboardDelay = settings.clipboardClearDelay;
+    settings.clipboardClearDelay = const Duration(minutes: 1);
+    addTearDown(() => settings.clipboardClearDelay = previousClipboardDelay);
+    String? copiedValue;
+    Duration? copiedDelay;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AccountDetailPage(
+          account: accounts.first,
+          passwordCopier: (value, clearAfter) async {
+            copiedValue = value;
+            copiedDelay = clearAfter;
+          },
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('复制密码'));
+    await tester.pump();
+
+    expect(copiedValue, 'secret-1');
+    expect(copiedDelay, const Duration(minutes: 1));
+    expect(find.text('密码已复制，1 分钟后自动清除'), findsOneWidget);
   });
 
   testWidgets('编辑页原样保存密码中的首尾空格', (tester) async {

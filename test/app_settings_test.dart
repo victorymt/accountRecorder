@@ -68,4 +68,10 @@ void main() {
     );
     expect(await settingsFile.exists(), isFalse);
   });
+
+  test('安全时间使用统一的界面文案', () {
+    expect(AppSettings.durationLabel(Duration.zero), '立即');
+    expect(AppSettings.durationLabel(const Duration(seconds: 15)), '15 秒');
+    expect(AppSettings.durationLabel(const Duration(minutes: 5)), '5 分钟');
+  });
 }

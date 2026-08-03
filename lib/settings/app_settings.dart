@@ -28,6 +28,12 @@ class AppSettings {
     Duration(minutes: 5),
   ];
 
+  static String durationLabel(Duration duration) {
+    if (duration == Duration.zero) return '立即';
+    if (duration.inSeconds < 60) return '${duration.inSeconds} 秒';
+    return '${duration.inMinutes} 分钟';
+  }
+
   final File? _fileOverride;
   Duration backgroundLockDelay = defaultBackgroundLockDelay;
   Duration clipboardClearDelay = defaultClipboardClearDelay;

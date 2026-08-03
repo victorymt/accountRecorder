@@ -3,12 +3,21 @@ import 'package:flutter/services.dart';
 
 import '../db/database_helper.dart';
 import '../security/sensitive_clipboard.dart';
+import '../settings/app_settings.dart';
 import 'edit_page.dart';
 
+typedef AccountPasswordCopier =
+    Future<void> Function(String value, Duration clearAfter);
+
 class AccountDetailPage extends StatefulWidget {
-  const AccountDetailPage({super.key, required this.account});
+  const AccountDetailPage({
+    super.key,
+    required this.account,
+    this.passwordCopier,
+  });
 
   final Account account;
+  final AccountPasswordCopier? passwordCopier;
 
   @override
   State<AccountDetailPage> createState() => _AccountDetailPageState();
@@ -25,8 +34,17 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
   }
 
   Future<void> _copyPassword() async {
-    await SensitiveClipboard.copy(widget.account.password);
-    _showMessage('密码已复制，30 秒后自动清除');
+    final clearAfter = AppSettings.instance.clipboardClearDelay;
+    final copier = widget.passwordCopier;
+    if (copier == null) {
+      await SensitiveClipboard.copy(
+        widget.account.password,
+        clearAfter: clearAfter,
+      );
+    } else {
+      await copier(widget.account.password, clearAfter);
+    }
+    _showMessage('密码已复制，${AppSettings.durationLabel(clearAfter)}后自动清除');
   }
 
   void _showMessage(String message) {
