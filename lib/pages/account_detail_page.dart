@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../db/database_helper.dart';
 import '../security/sensitive_clipboard.dart';
 import '../settings/app_settings.dart';
+import '../totp/totp_service.dart';
 import 'edit_page.dart';
 
 typedef AccountPasswordCopier =
@@ -14,18 +17,38 @@ class AccountDetailPage extends StatefulWidget {
     super.key,
     required this.account,
     this.passwordCopier,
+    this.totpCopier,
   });
 
   final Account account;
   final AccountPasswordCopier? passwordCopier;
+  final AccountPasswordCopier? totpCopier;
 
   @override
   State<AccountDetailPage> createState() => _AccountDetailPageState();
 }
 
 class _AccountDetailPageState extends State<AccountDetailPage> {
+  Timer? _totpTimer;
+  DateTime _now = DateTime.now();
   bool _showPassword = false;
   bool _deleting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.account.totp != null) {
+      _totpTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _now = DateTime.now());
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _totpTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _copyUsername() async {
     if (widget.account.username.isEmpty) return;
@@ -45,6 +68,20 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
       await copier(widget.account.password, clearAfter);
     }
     _showMessage('密码已复制，${AppSettings.durationLabel(clearAfter)}后自动清除');
+  }
+
+  Future<void> _copyTotpCode() async {
+    final totp = widget.account.totp;
+    if (totp == null) return;
+    final code = totp.codeAt(DateTime.now());
+    final clearAfter = AppSettings.instance.clipboardClearDelay;
+    final copier = widget.totpCopier;
+    if (copier == null) {
+      await SensitiveClipboard.copy(code, clearAfter: clearAfter);
+    } else {
+      await copier(code, clearAfter);
+    }
+    _showMessage('验证码已复制，${AppSettings.durationLabel(clearAfter)}后自动清除');
   }
 
   void _showMessage(String message) {
@@ -159,33 +196,112 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
                     icon: const Icon(Icons.copy_outlined),
                   ),
           ),
-          const Divider(height: 1),
-          _DetailField(
-            label: '密码',
-            value: _showPassword ? account.password : '************',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: _showPassword ? '隐藏密码' : '显示密码',
-                  onPressed: () =>
-                      setState(() => _showPassword = !_showPassword),
-                  icon: Icon(
-                    _showPassword ? Icons.visibility_off : Icons.visibility,
+          if (account.password.isNotEmpty) ...[
+            const Divider(height: 1),
+            _DetailField(
+              label: '密码',
+              value: _showPassword ? account.password : '************',
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: _showPassword ? '隐藏密码' : '显示密码',
+                    onPressed: () =>
+                        setState(() => _showPassword = !_showPassword),
+                    icon: Icon(
+                      _showPassword ? Icons.visibility_off : Icons.visibility,
+                    ),
                   ),
-                ),
-                IconButton(
-                  tooltip: '复制密码',
-                  onPressed: _copyPassword,
-                  icon: const Icon(Icons.copy_outlined),
-                ),
-              ],
+                  IconButton(
+                    tooltip: '复制密码',
+                    onPressed: _copyPassword,
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
+          if (account.totp case final totp?) ...[
+            const Divider(height: 1),
+            _TotpDetailField(config: totp, now: _now, onCopy: _copyTotpCode),
+          ],
           if (account.extra.isNotEmpty) ...[
             const Divider(height: 1),
             _DetailField(label: '备注', value: account.extra),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TotpDetailField extends StatelessWidget {
+  const _TotpDetailField({
+    required this.config,
+    required this.now,
+    required this.onCopy,
+  });
+
+  final TotpConfig config;
+  final DateTime now;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = config.remainingSeconds(now);
+    final code = formatTotpCode(config.codeAt(now));
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 58,
+            child: Text(
+              '验证码',
+              style: TextStyle(color: Color(0xFF777777), fontSize: 14),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  code,
+                  style: const TextStyle(
+                    color: Color(0xFF222222),
+                    fontSize: 25,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  [
+                    if (config.displayName.isNotEmpty) config.displayName,
+                    '$remaining 秒',
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF888888),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                LinearProgressIndicator(
+                  value: remaining / config.period,
+                  minHeight: 3,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '复制验证码',
+            onPressed: onCopy,
+            icon: const Icon(Icons.copy_outlined),
+          ),
         ],
       ),
     );

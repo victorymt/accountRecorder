@@ -6,6 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:account_book/crypto/crypto_helper.dart';
 import 'package:account_book/db/database_helper.dart';
+import 'package:account_book/totp/totp_service.dart';
 
 void main() {
   setUpAll(() {
@@ -98,6 +99,11 @@ void main() {
         username: 'mail@example.com',
         password: 'mail-secret',
         extra: '主邮箱',
+        totp: TotpConfig(
+          secret: 'JBSWY3DPEHPK3PXP',
+          issuer: '邮箱',
+          accountName: 'mail@example.com',
+        ),
       ),
     );
     await helper.close();
@@ -108,6 +114,8 @@ void main() {
     final accounts = await reopened.listAccounts('邮箱');
     expect(accounts.single.username, 'mail@example.com');
     expect(accounts.single.password, 'mail-secret');
+    expect(accounts.single.totp?.secret, 'JBSWY3DPEHPK3PXP');
+    expect(accounts.single.totp?.issuer, '邮箱');
     await reopened.close();
   }, timeout: const Timeout(Duration(minutes: 3)));
 
@@ -288,6 +296,11 @@ void main() {
         password: 'restored-secret',
         extra: '来自备份',
         tags: const ['恢复'],
+        totp: TotpConfig(
+          secret: 'JBSWY3DPEHPK3PXP',
+          issuer: '恢复服务',
+          accountName: 'restored-user',
+        ),
         createdAt: 1700000010000,
         updatedAt: 1700000011000,
       ),
@@ -298,6 +311,7 @@ void main() {
     expect(current.single.id, 12);
     expect(current.single.title, '已恢复账号');
     expect(current.single.tags, ['恢复']);
+    expect(current.single.totp?.issuer, '恢复服务');
     await helper.close();
 
     final reopened = DatabaseHelper.forTesting(path);
@@ -306,6 +320,7 @@ void main() {
     reopenedKey?.fillRange(0, reopenedKey.length, 0);
     final persisted = await reopened.listAccounts('');
     expect(persisted.single.password, 'restored-secret');
+    expect(persisted.single.totp?.secret, 'JBSWY3DPEHPK3PXP');
     await reopened.close();
   }, timeout: const Timeout(Duration(minutes: 3)));
 }

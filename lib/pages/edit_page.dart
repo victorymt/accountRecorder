@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
+import '../totp/totp_service.dart';
 
 typedef AccountSaver = Future<void> Function(Account account, bool isEdit);
 
@@ -20,10 +21,43 @@ class _EditPageState extends State<EditPage> {
   final _passwordController = TextEditingController();
   final _extraController = TextEditingController();
   final _tagsController = TextEditingController();
+  final _totpInputController = TextEditingController();
   bool _obscure = true;
+  bool _totpObscure = true;
+  bool _totpEnabled = false;
   bool _saving = false;
+  TotpAlgorithm _totpAlgorithm = TotpAlgorithm.sha1;
+  int _totpDigits = 6;
+  int _totpPeriod = 30;
+  String _totpIssuer = '';
+  String _totpAccountName = '';
 
   bool get _isEdit => widget.account != null;
+
+  void _updateTotpInput(String value) {
+    if (!value.trimLeft().toLowerCase().startsWith('otpauth:')) return;
+    TotpConfig config;
+    try {
+      config = TotpConfig.fromUri(value);
+    } on FormatException {
+      return;
+    }
+    if (_titleController.text.trim().isEmpty) {
+      _titleController.text = config.issuer.isEmpty
+          ? config.accountName
+          : config.issuer;
+    }
+    if (_usernameController.text.trim().isEmpty) {
+      _usernameController.text = config.accountName;
+    }
+    setState(() {
+      _totpAlgorithm = config.algorithm;
+      _totpDigits = config.digits;
+      _totpPeriod = config.period;
+      _totpIssuer = config.issuer;
+      _totpAccountName = config.accountName;
+    });
+  }
 
   @override
   void initState() {
@@ -35,6 +69,16 @@ class _EditPageState extends State<EditPage> {
       _passwordController.text = account.password;
       _extraController.text = account.extra;
       _tagsController.text = account.tags.join('，');
+      final totp = account.totp;
+      if (totp != null) {
+        _totpEnabled = true;
+        _totpInputController.text = totp.secret;
+        _totpAlgorithm = totp.algorithm;
+        _totpDigits = totp.digits;
+        _totpPeriod = totp.period;
+        _totpIssuer = totp.issuer;
+        _totpAccountName = totp.accountName;
+      }
     }
   }
 
@@ -45,6 +89,8 @@ class _EditPageState extends State<EditPage> {
     _passwordController.dispose();
     _extraController.dispose();
     _tagsController.dispose();
+    _totpInputController.clear();
+    _totpInputController.dispose();
     super.dispose();
   }
 
@@ -63,7 +109,25 @@ class _EditPageState extends State<EditPage> {
       _showError('请输入名称');
       return;
     }
-    if (password.isEmpty) {
+    TotpConfig? totp;
+    if (_totpEnabled) {
+      try {
+        totp = TotpConfig.fromInput(
+          _totpInputController.text,
+          issuer: _totpIssuer.isEmpty ? title : _totpIssuer,
+          accountName: _totpAccountName.isEmpty
+              ? (username.isEmpty ? title : username)
+              : _totpAccountName,
+          algorithm: _totpAlgorithm,
+          digits: _totpDigits,
+          period: _totpPeriod,
+        );
+      } on FormatException {
+        _showError('动态验证码配置无效');
+        return;
+      }
+    }
+    if (password.isEmpty && totp == null) {
       _showError('请输入密码');
       return;
     }
@@ -71,12 +135,14 @@ class _EditPageState extends State<EditPage> {
     final account =
         widget.account ??
         Account(title: '', username: '', password: '', extra: '');
+    final previousTotp = account.totp;
     account
       ..title = title
       ..username = username
       ..password = password
       ..extra = extra
-      ..tags = tags;
+      ..tags = tags
+      ..totp = totp;
     try {
       if (widget.accountSaver case final saver?) {
         await saver(account, _isEdit);
@@ -92,6 +158,9 @@ class _EditPageState extends State<EditPage> {
       return;
     }
     if (!mounted) return;
+    if (previousTotp != null && !identical(previousTotp, totp)) {
+      previousTotp.wipe();
+    }
     Navigator.of(context).pop(true);
   }
 
@@ -179,6 +248,118 @@ class _EditPageState extends State<EditPage> {
                 ),
               ),
             ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.timer_outlined),
+              title: const Text('动态验证码（TOTP）'),
+              value: _totpEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _totpEnabled = value),
+            ),
+            if (_totpEnabled) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _totpInputController,
+                obscureText: _totpObscure,
+                autocorrect: false,
+                enableSuggestions: false,
+                keyboardType: TextInputType.visiblePassword,
+                textInputAction: TextInputAction.next,
+                onTapOutside: _dismissKeyboard,
+                onChanged: _updateTotpInput,
+                decoration: InputDecoration(
+                  labelText: 'TOTP 密钥或地址',
+                  hintText: 'Base32 / otpauth://',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    tooltip: _totpObscure ? '显示密钥' : '隐藏密钥',
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() => _totpObscure = !_totpObscure),
+                    icon: Icon(
+                      _totpObscure ? Icons.visibility_off : Icons.visibility,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<TotpAlgorithm>(
+                      key: ValueKey(_totpAlgorithm),
+                      initialValue: _totpAlgorithm,
+                      decoration: const InputDecoration(
+                        labelText: '算法',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final algorithm in TotpAlgorithm.values)
+                          DropdownMenuItem(
+                            value: algorithm,
+                            child: Text(algorithm.wireName),
+                          ),
+                      ],
+                      onChanged: _saving
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() => _totpAlgorithm = value);
+                              }
+                            },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      key: ValueKey(_totpDigits),
+                      initialValue: _totpDigits,
+                      decoration: const InputDecoration(
+                        labelText: '位数',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 6, child: Text('6 位')),
+                        DropdownMenuItem(value: 8, child: Text('8 位')),
+                      ],
+                      onChanged: _saving
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() => _totpDigits = value);
+                              }
+                            },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<int>(
+                key: ValueKey(_totpPeriod),
+                initialValue: _totpPeriod,
+                decoration: const InputDecoration(
+                  labelText: '刷新周期',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 15, child: Text('15 秒')),
+                  DropdownMenuItem(value: 30, child: Text('30 秒')),
+                  DropdownMenuItem(value: 45, child: Text('45 秒')),
+                  DropdownMenuItem(value: 60, child: Text('60 秒')),
+                  DropdownMenuItem(value: 90, child: Text('90 秒')),
+                  DropdownMenuItem(value: 120, child: Text('120 秒')),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _totpPeriod = value);
+                        }
+                      },
+              ),
+            ],
             const SizedBox(height: 16),
             TextField(
               controller: _extraController,

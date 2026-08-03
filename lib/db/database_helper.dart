@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../crypto/crypto_helper.dart';
 import '../crypto/native_key_derivation.dart';
+import '../totp/totp_service.dart';
 
 class Account {
   Account({
@@ -13,6 +14,7 @@ class Account {
     required this.password,
     required this.extra,
     this.tags = const [],
+    this.totp,
     this.createdAt,
     this.updatedAt,
     this.secretsDecrypted = false,
@@ -24,6 +26,7 @@ class Account {
   String password;
   String extra;
   List<String> tags;
+  TotpConfig? totp;
   final int? createdAt;
   int? updatedAt;
   bool secretsDecrypted;
@@ -572,6 +575,7 @@ class DatabaseHelper {
           password: account.password,
           extra: account.extra,
           tags: List<String>.of(account.tags),
+          totp: account.totp?.copy(),
           createdAt: account.createdAt ?? now,
           updatedAt: now,
           secretsDecrypted: true,
@@ -717,6 +721,7 @@ class DatabaseHelper {
         'password': account.password,
         'extra': account.extra,
         'tags': List<String>.of(account.tags),
+        'totp': account.totp?.toJson(),
         'createdAt': createdAt,
         'updatedAt': updatedAt,
       });
@@ -904,6 +909,7 @@ String _encryptAccountPayload(Account account, int id, Uint8List key) {
     'password': account.password,
     'extra': account.extra,
     'tags': account.tags,
+    'totp': account.totp?.toJson(),
   });
   return CryptoHelper.encrypt(
     payload,
@@ -934,6 +940,7 @@ Account _decryptVaultRow(Map<String, Object?> row, Uint8List key) {
     password: decoded['password'] as String,
     extra: decoded['extra'] as String,
     tags: rawTags.whereType<String>().toList(),
+    totp: decoded['totp'] == null ? null : TotpConfig.fromJson(decoded['totp']),
     createdAt: row['created_at'] as int,
     updatedAt: row['updated_at'] as int,
     secretsDecrypted: true,
@@ -957,6 +964,7 @@ Account _copyImportedAccount(
     password: source.password,
     extra: source.extra,
     tags: List<String>.of(source.tags),
+    totp: source.totp?.copy(),
     createdAt: createdAt ?? source.createdAt,
     updatedAt: DateTime.now().millisecondsSinceEpoch,
     secretsDecrypted: true,
@@ -1000,6 +1008,9 @@ List<Map<String, Object?>> _encryptRestoredRowsIsolate(
         password: snapshot['password'] as String,
         extra: snapshot['extra'] as String,
         tags: (snapshot['tags'] as List).cast<String>().toList(),
+        totp: snapshot['totp'] == null
+            ? null
+            : TotpConfig.fromJson(snapshot['totp']),
         createdAt: snapshot['createdAt'] as int,
         updatedAt: snapshot['updatedAt'] as int,
         secretsDecrypted: true,
@@ -1073,5 +1084,7 @@ void _wipeAccount(Account account) {
   account.password = '';
   account.extra = '';
   account.tags = const [];
+  account.totp?.wipe();
+  account.totp = null;
   account.secretsDecrypted = false;
 }

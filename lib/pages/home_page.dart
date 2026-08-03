@@ -13,6 +13,8 @@ import '../backup/encrypted_vault_backup.dart';
 import '../db/database_helper.dart';
 import '../import/accountbox_importer.dart';
 import '../security/sensitive_clipboard.dart';
+import '../settings/app_settings.dart';
+import '../totp/totp_service.dart';
 import '../widgets/backup_password_dialog.dart';
 import 'account_detail_page.dart';
 import 'edit_page.dart';
@@ -33,7 +35,7 @@ class HomePage extends StatefulWidget {
 
 enum _HomeAction { import, exportBackup, restoreBackup, security, lock }
 
-enum _AccountAction { copyPassword, edit, delete }
+enum _AccountAction { copyPassword, copyTotp, edit, delete }
 
 class _HomePageState extends State<HomePage> {
   static const _brandGreen = Color(0xFF00965E);
@@ -78,7 +80,9 @@ class _HomePageState extends State<HomePage> {
 
   final _searchController = TextEditingController();
   final _accountScrollController = ScrollController();
+  final _totpClock = ValueNotifier<DateTime>(DateTime.now());
   Timer? _searchDebounce;
+  Timer? _totpTimer;
   String _query = '';
   String _selectedCategory = _allAccounts;
   List<String> _allTags = const [];
@@ -95,12 +99,17 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _totpTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _totpClock.value = DateTime.now();
+    });
     _reload();
   }
 
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _totpTimer?.cancel();
+    _totpClock.dispose();
     _searchController.dispose();
     _accountScrollController.dispose();
     super.dispose();
@@ -147,7 +156,7 @@ class _HomePageState extends State<HomePage> {
 
   String _tagForCategory(String category) {
     return switch (category) {
-      _dynamicPasswords => '动态密码',
+      _dynamicPasswords => '',
       _favorites => '我的收藏',
       _ => category,
     };
@@ -166,6 +175,7 @@ class _HomePageState extends State<HomePage> {
               (normalizedQuery.isEmpty ||
                   account.title.toLowerCase().contains(normalizedQuery) ||
                   account.username.toLowerCase().contains(normalizedQuery)) &&
+              (category != _dynamicPasswords || account.totp != null) &&
               (tag.isEmpty || account.tags.contains(tag)),
         )
         .toList();
@@ -280,11 +290,26 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _copyPassword(Account account) async {
+    if (account.password.isEmpty) return;
     await DatabaseHelper.instance.decryptSecret(account);
     await SensitiveClipboard.copy(account.password);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('密码已复制'), duration: Duration(seconds: 1)),
+    );
+  }
+
+  Future<void> _copyTotp(Account account) async {
+    final totp = account.totp;
+    if (totp == null) return;
+    final clearAfter = AppSettings.instance.clipboardClearDelay;
+    await SensitiveClipboard.copy(
+      totp.codeAt(DateTime.now()),
+      clearAfter: clearAfter,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('验证码已复制'), duration: Duration(seconds: 1)),
     );
   }
 
@@ -296,12 +321,19 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.content_copy_outlined),
-              title: const Text('复制密码'),
-              onTap: () =>
-                  Navigator.of(context).pop(_AccountAction.copyPassword),
-            ),
+            if (account.password.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.content_copy_outlined),
+                title: const Text('复制密码'),
+                onTap: () =>
+                    Navigator.of(context).pop(_AccountAction.copyPassword),
+              ),
+            if (account.totp != null)
+              ListTile(
+                leading: const Icon(Icons.timer_outlined),
+                title: const Text('复制验证码'),
+                onTap: () => Navigator.of(context).pop(_AccountAction.copyTotp),
+              ),
             ListTile(
               leading: const Icon(Icons.edit_outlined),
               title: const Text('编辑账号'),
@@ -320,6 +352,9 @@ class _HomePageState extends State<HomePage> {
     switch (action) {
       case _AccountAction.copyPassword:
         await _copyPassword(account);
+        break;
+      case _AccountAction.copyTotp:
+        await _copyTotp(account);
         break;
       case _AccountAction.edit:
         await _openEdit(account);
@@ -993,6 +1028,50 @@ class _HomePageState extends State<HomePage> {
       itemCount: _accounts.length,
       itemBuilder: (context, index) {
         final account = _accounts[index];
+        if (_selectedCategory == _dynamicPasswords && account.totp != null) {
+          return ValueListenableBuilder<DateTime>(
+            valueListenable: _totpClock,
+            builder: (context, now, _) {
+              final totp = account.totp!;
+              final code = formatTotpCode(totp.codeAt(now));
+              final remaining = totp.remainingSeconds(now);
+              return ListTile(
+                contentPadding: const EdgeInsets.only(left: 18, right: 4),
+                title: Text(
+                  account.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF282828),
+                    fontSize: 20,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Text(
+                    '$code · $remaining 秒',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _brandGreen,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+                trailing: IconButton(
+                  tooltip: '复制验证码',
+                  onPressed: () => _copyTotp(account),
+                  icon: const Icon(Icons.copy_outlined, color: _brandGreen),
+                ),
+                onTap: () => _openDetails(account),
+                onLongPress: () => _showAccountActions(account),
+              );
+            },
+          );
+        }
         return ListTile(
           contentPadding: const EdgeInsets.only(left: 18, right: 4),
           title: Text(
@@ -1018,11 +1097,19 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-          trailing: IconButton(
-            tooltip: '复制密码',
-            onPressed: () => _copyPassword(account),
-            icon: const Icon(Icons.copy_outlined, color: _brandGreen),
-          ),
+          trailing: account.password.isNotEmpty
+              ? IconButton(
+                  tooltip: '复制密码',
+                  onPressed: () => _copyPassword(account),
+                  icon: const Icon(Icons.copy_outlined, color: _brandGreen),
+                )
+              : account.totp != null
+              ? IconButton(
+                  tooltip: '复制验证码',
+                  onPressed: () => _copyTotp(account),
+                  icon: const Icon(Icons.timer_outlined, color: _brandGreen),
+                )
+              : null,
           onTap: () => _openDetails(account),
           onLongPress: () => _showAccountActions(account),
         );

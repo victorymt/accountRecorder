@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:account_book/backup/encrypted_vault_backup.dart';
 import 'package:account_book/db/database_helper.dart';
+import 'package:account_book/totp/totp_service.dart';
 
 void main() {
   const password = 'BackupPass123!';
@@ -19,6 +20,11 @@ void main() {
           password: '  secret with spaces  ',
           extra: '恢复代码\n第二行',
           tags: const ['工作', '邮件'],
+          totp: TotpConfig(
+            secret: 'JBSWY3DPEHPK3PXP',
+            issuer: 'Example',
+            accountName: 'user@example.com',
+          ),
           createdAt: 1700000000000,
           updatedAt: 1700000001000,
         ),
@@ -41,6 +47,7 @@ void main() {
     expect(backup, isNot(contains('user@example.com')));
     expect(backup, isNot(contains('secret with spaces')));
     expect(backup, isNot(contains('恢复代码')));
+    expect(backup, isNot(contains('JBSWY3DPEHPK3PXP')));
 
     final restored = await EncryptedVaultBackup.open(backup, password);
     addTearDown(restored.wipe);
@@ -52,8 +59,12 @@ void main() {
     expect(mail.password, '  secret with spaces  ');
     expect(mail.extra, '恢复代码\n第二行');
     expect(mail.tags, ['工作', '邮件']);
+    expect(mail.totp?.secret, 'JBSWY3DPEHPK3PXP');
+    expect(mail.totp?.issuer, 'Example');
+    expect(mail.totp?.accountName, 'user@example.com');
     expect(mail.createdAt, 1700000000000);
     expect(mail.updatedAt, 1700000001000);
+    expect(restored.accounts.last.totp, isNull);
   });
 
   test('错误备份密码不会返回任何账号', () async {

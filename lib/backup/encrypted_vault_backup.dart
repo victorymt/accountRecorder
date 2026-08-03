@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../crypto/crypto_helper.dart';
 import '../crypto/native_key_derivation.dart';
 import '../db/database_helper.dart';
+import '../totp/totp_service.dart';
 
 class BackupFormatException implements Exception {
   const BackupFormatException(this.message);
@@ -32,7 +33,10 @@ class VaultBackupData {
         ..username = ''
         ..password = ''
         ..extra = ''
-        ..tags = const []
+        ..tags = const [];
+      account.totp?.wipe();
+      account
+        ..totp = null
         ..secretsDecrypted = false;
     }
     accounts.clear();
@@ -213,6 +217,7 @@ class EncryptedVaultBackup {
       'password': account.password,
       'extra': account.extra,
       'tags': List<String>.of(account.tags),
+      'totp': account.totp?.toJson(),
       'createdAt': createdAt,
       'updatedAt': updatedAt,
     };
@@ -249,6 +254,7 @@ class EncryptedVaultBackup {
       password: password,
       extra: extra,
       tags: tags.cast<String>().toList(),
+      totp: raw['totp'] == null ? null : TotpConfig.fromJson(raw['totp']),
       createdAt: createdAt,
       updatedAt: updatedAt,
       secretsDecrypted: true,
