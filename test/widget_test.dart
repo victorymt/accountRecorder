@@ -5,8 +5,11 @@ import 'package:account_book/db/database_helper.dart';
 import 'package:account_book/pages/account_detail_page.dart';
 import 'package:account_book/pages/edit_page.dart';
 import 'package:account_book/pages/home_page.dart';
+import 'package:account_book/pages/security_audit_page.dart';
+import 'package:account_book/security/password_audit.dart';
 import 'package:account_book/settings/app_settings.dart';
 import 'package:account_book/totp/totp_service.dart';
+import 'package:account_book/widgets/password_generator_sheet.dart';
 
 void main() {
   final accounts = [
@@ -136,6 +139,7 @@ void main() {
     expect(find.text('导出加密备份'), findsOneWidget);
     expect(find.text('恢复加密备份'), findsOneWidget);
     expect(find.text('导入账号'), findsOneWidget);
+    expect(find.text('安全检查'), findsOneWidget);
     await tester.tap(find.text('安全设置'));
     await tester.pumpAndSettle();
     expect(find.text('修改主密码'), findsOneWidget);
@@ -242,6 +246,118 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(saved?.password, '  pass word  ');
+  });
+
+  testWidgets('编辑页使用生成密码并显示强度', (tester) async {
+    Account? saved;
+    const generated = r'V7#pL2@qR9!mX4$kW8';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditPage(
+          accountSaver: (account, _) async => saved = account,
+          passwordGeneratorPicker: (_) async => generated,
+        ),
+      ),
+    );
+
+    await tester.enterText(find.widgetWithText(TextField, '名称'), '测试账号');
+    await tester.tap(find.byTooltip('生成密码'));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final passwordField = tester.widget<TextField>(
+      find.widgetWithText(TextField, '密码'),
+    );
+    expect(passwordField.controller?.text, generated);
+    expect(find.text('密码强度'), findsOneWidget);
+    expect(
+      find.text('较强').evaluate().isNotEmpty ||
+          find.text('很强').evaluate().isNotEmpty,
+      isTrue,
+    );
+
+    await tester.tap(find.byTooltip('保存'));
+    await tester.pumpAndSettle();
+    expect(saved?.password, generated);
+  });
+
+  testWidgets('密码生成面板返回符合默认长度的密码', (tester) async {
+    String? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => FilledButton(
+              onPressed: () async {
+                selected = await PasswordGeneratorSheet.show(context);
+              },
+              child: const Text('打开生成器'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开生成器'));
+    await tester.pumpAndSettle();
+    expect(find.text('生成密码'), findsOneWidget);
+    expect(find.text('小写字母'), findsOneWidget);
+    expect(find.text('大写字母'), findsOneWidget);
+    expect(find.text('数字'), findsOneWidget);
+    expect(find.text('符号'), findsOneWidget);
+
+    await tester.tap(find.text('使用此密码'));
+    await tester.pumpAndSettle();
+    expect(selected, isNotNull);
+    expect(selected, hasLength(20));
+  });
+
+  testWidgets('安全检查页按风险分组展示账号', (tester) async {
+    final now = DateTime(2026, 8, 3);
+    const reused = r'S7!uQ2#xK9@rT4$z';
+    final auditAccounts = [
+      Account(
+        id: 10,
+        title: '银行',
+        username: 'alice',
+        password: reused,
+        extra: '',
+        updatedAt: now.millisecondsSinceEpoch,
+      ),
+      Account(
+        id: 11,
+        title: '邮箱',
+        username: 'alice@example.com',
+        password: reused,
+        extra: '',
+        updatedAt: now.millisecondsSinceEpoch,
+      ),
+      Account(
+        id: 12,
+        title: '论坛',
+        username: 'alice',
+        password: 'password123',
+        extra: '',
+        updatedAt: now
+            .subtract(const Duration(days: 400))
+            .millisecondsSinceEpoch,
+      ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SecurityAuditPage(
+          accounts: auditAccounts,
+          now: now,
+          auditAnalyzer: (request) async => analyzePasswordAudit(request),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('3 个账号需要处理'), findsOneWidget);
+    expect(find.text('重复使用的密码'), findsOneWidget);
+    expect(find.text('容易猜到的密码'), findsOneWidget);
+    expect(find.text('一年以上未更新'), findsOneWidget);
+    expect(find.text('尚未配置动态验证码'), findsOneWidget);
   });
 
   testWidgets('编辑页支持 otpauth URI 和仅 TOTP 条目', (tester) async {

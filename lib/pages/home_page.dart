@@ -18,6 +18,7 @@ import '../totp/totp_service.dart';
 import '../widgets/backup_password_dialog.dart';
 import 'account_detail_page.dart';
 import 'edit_page.dart';
+import 'security_audit_page.dart';
 import 'security_settings_page.dart';
 
 typedef AccountLoader =
@@ -33,7 +34,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-enum _HomeAction { import, exportBackup, restoreBackup, security, lock }
+enum _HomeAction { import, exportBackup, restoreBackup, audit, security, lock }
 
 enum _AccountAction { copyPassword, copyTotp, edit, delete }
 
@@ -693,6 +694,9 @@ class _HomePageState extends State<HomePage> {
       case _HomeAction.restoreBackup:
         _restoreEncryptedBackup();
         break;
+      case _HomeAction.audit:
+        _openSecurityAudit();
+        break;
       case _HomeAction.security:
         Navigator.of(context).push<void>(
           MaterialPageRoute(builder: (_) => const SecuritySettingsPage()),
@@ -702,6 +706,15 @@ class _HomePageState extends State<HomePage> {
         widget.onLock?.call();
         break;
     }
+  }
+
+  Future<void> _openSecurityAudit() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SecurityAuditPage(accounts: _allAccountsData),
+      ),
+    );
+    if (mounted) await _reload();
   }
 
   Future<void> _showTools() async {
@@ -726,6 +739,11 @@ class _HomePageState extends State<HomePage> {
               leading: const Icon(Icons.upload_file_outlined),
               title: const Text('导入账号'),
               onTap: () => Navigator.of(context).pop(_HomeAction.import),
+            ),
+            ListTile(
+              leading: const Icon(Icons.health_and_safety_outlined),
+              title: const Text('安全检查'),
+              onTap: () => Navigator.of(context).pop(_HomeAction.audit),
             ),
             ListTile(
               leading: const Icon(Icons.security_outlined),
@@ -915,6 +933,14 @@ class _HomePageState extends State<HomePage> {
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.upload_file_outlined),
                         title: Text('导入账号'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _HomeAction.audit,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.health_and_safety_outlined),
+                        title: Text('安全检查'),
                       ),
                     ),
                     PopupMenuItem(

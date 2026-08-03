@@ -1,11 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
+import '../security/password_security.dart';
 import '../totp/totp_service.dart';
+import '../widgets/password_generator_sheet.dart';
+import '../widgets/password_strength_indicator.dart';
 import 'totp_scanner_page.dart';
 
 typedef AccountSaver = Future<void> Function(Account account, bool isEdit);
 typedef TotpQrScanner = Future<String?> Function(BuildContext context);
+typedef PasswordGeneratorPicker =
+    Future<String?> Function(BuildContext context);
 
 class EditPage extends StatefulWidget {
   const EditPage({
@@ -13,11 +20,13 @@ class EditPage extends StatefulWidget {
     this.account,
     this.accountSaver,
     this.totpQrScanner,
+    this.passwordGeneratorPicker,
   });
 
   final Account? account;
   final AccountSaver? accountSaver;
   final TotpQrScanner? totpQrScanner;
+  final PasswordGeneratorPicker? passwordGeneratorPicker;
 
   @override
   State<EditPage> createState() => _EditPageState();
@@ -30,6 +39,7 @@ class _EditPageState extends State<EditPage> {
   final _extraController = TextEditingController();
   final _tagsController = TextEditingController();
   final _totpInputController = TextEditingController();
+  Timer? _strengthDebounce;
   bool _obscure = true;
   bool _totpObscure = true;
   bool _totpEnabled = false;
@@ -39,6 +49,7 @@ class _EditPageState extends State<EditPage> {
   int _totpPeriod = 30;
   String _totpIssuer = '';
   String _totpAccountName = '';
+  PasswordStrength? _passwordStrength;
 
   bool get _isEdit => widget.account != null;
 
@@ -92,6 +103,39 @@ class _EditPageState extends State<EditPage> {
     _applyTotpConfig(config);
   }
 
+  void _scheduleStrengthEvaluation() {
+    _strengthDebounce?.cancel();
+    final password = _passwordController.text;
+    if (password.isEmpty) {
+      if (_passwordStrength != null && mounted) {
+        setState(() => _passwordStrength = null);
+      }
+      return;
+    }
+    final inputs = [_titleController.text, _usernameController.text];
+    _strengthDebounce = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted || _passwordController.text != password) return;
+      final strength = evaluatePasswordStrength(password, userInputs: inputs);
+      if (_passwordStrength?.score != strength.score) {
+        setState(() => _passwordStrength = strength);
+      }
+    });
+  }
+
+  Future<void> _openPasswordGenerator() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final picker = widget.passwordGeneratorPicker;
+    final password = picker != null
+        ? await picker(context)
+        : await PasswordGeneratorSheet.show(context);
+    if (!mounted || password == null) return;
+    _passwordController.value = TextEditingValue(
+      text: password,
+      selection: TextSelection.collapsed(offset: password.length),
+    );
+    setState(() => _obscure = false);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -113,10 +157,15 @@ class _EditPageState extends State<EditPage> {
         _totpAccountName = totp.accountName;
       }
     }
+    _titleController.addListener(_scheduleStrengthEvaluation);
+    _usernameController.addListener(_scheduleStrengthEvaluation);
+    _passwordController.addListener(_scheduleStrengthEvaluation);
+    _scheduleStrengthEvaluation();
   }
 
   @override
   void dispose() {
+    _strengthDebounce?.cancel();
     _titleController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
@@ -273,15 +322,38 @@ class _EditPageState extends State<EditPage> {
               decoration: InputDecoration(
                 labelText: '密码',
                 border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscure ? Icons.visibility_off : Icons.visibility,
-                  ),
-                  onPressed: () => setState(() => _obscure = !_obscure),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: '生成密码',
+                      onPressed: _saving ? null : _openPasswordGenerator,
+                      icon: const Icon(Icons.password_outlined),
+                    ),
+                    IconButton(
+                      tooltip: _obscure ? '显示密码' : '隐藏密码',
+                      icon: Icon(
+                        _obscure ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _obscure = !_obscure),
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(
+              height: 34,
+              child: _passwordStrength == null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: PasswordStrengthIndicator(
+                        strength: _passwordStrength!,
+                      ),
+                    ),
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               secondary: const Icon(Icons.timer_outlined),
