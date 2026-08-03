@@ -323,6 +323,69 @@ void main() {
     expect(persisted.single.totp?.secret, 'JBSWY3DPEHPK3PXP');
     await reopened.close();
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('账号删除进入加密回收站并可跨重启恢复或永久清理', () async {
+    final path =
+        '/tmp/account_book_trash_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
+    addTearDown(() => databaseFactory.deleteDatabase(path));
+
+    final helper = DatabaseHelper.forTesting(path);
+    await helper.setupMasterPassword('TrashPass123');
+    final id = await helper.insertAccount(
+      Account(
+        title: '可恢复账号',
+        username: 'trash-user',
+        password: 'trash-secret',
+        extra: '',
+      ),
+    );
+    expect(await helper.deleteAccount(id), 1);
+    expect(await helper.listAccounts(''), isEmpty);
+    final inTrash = await helper.listDeletedAccounts();
+    expect(inTrash, hasLength(1));
+    expect(inTrash.single.deletedAt, isNotNull);
+    await helper.close();
+
+    final reopened = DatabaseHelper.forTesting(path);
+    expect(await reopened.unlock('TrashPass123'), isNotNull);
+    expect(await reopened.listAccounts(''), isEmpty);
+    expect(await reopened.listDeletedAccounts(), hasLength(1));
+    expect(await reopened.restoreDeletedAccount(id), 1);
+    expect(await reopened.listAccounts(''), hasLength(1));
+    expect(await reopened.listDeletedAccounts(), isEmpty);
+    expect(await reopened.deleteAccount(id), 1);
+    expect(
+      await reopened.purgeExpiredTrash(
+        now: DateTime.now().add(const Duration(days: 31)),
+      ),
+      1,
+    );
+    expect(await reopened.listDeletedAccounts(), isEmpty);
+    await reopened.close();
+  });
+
+  test('回收站支持一次性永久清空', () async {
+    final path =
+        '/tmp/account_book_trash_clear_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
+    addTearDown(() => databaseFactory.deleteDatabase(path));
+
+    final helper = DatabaseHelper.forTesting(path);
+    await helper.setupMasterPassword('TrashClearPass123');
+    final ids = [
+      await helper.insertAccount(
+        Account(title: '回收一', username: '', password: 'one', extra: ''),
+      ),
+      await helper.insertAccount(
+        Account(title: '回收二', username: '', password: 'two', extra: ''),
+      ),
+    ];
+    for (final id in ids) {
+      expect(await helper.deleteAccount(id), 1);
+    }
+    expect(await helper.clearTrash(), 2);
+    expect(await helper.listDeletedAccounts(), isEmpty);
+    await helper.close();
+  });
 }
 
 Future<void> _createLegacyDatabase(String path, String password) async {

@@ -34,6 +34,7 @@ void main() {
           username: '13800000000',
           password: 'Bank-Pass-2026',
           extra: '',
+          deletedAt: 1700000004000,
           createdAt: 1700000002000,
           updatedAt: 1700000003000,
         ),
@@ -65,6 +66,7 @@ void main() {
     expect(mail.createdAt, 1700000000000);
     expect(mail.updatedAt, 1700000001000);
     expect(restored.accounts.last.totp, isNull);
+    expect(restored.accounts.last.deletedAt, 1700000004000);
   });
 
   test('错误备份密码不会返回任何账号', () async {

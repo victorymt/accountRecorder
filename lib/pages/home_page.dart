@@ -20,21 +20,37 @@ import 'account_detail_page.dart';
 import 'edit_page.dart';
 import 'security_audit_page.dart';
 import 'security_settings_page.dart';
+import 'trash_page.dart';
 
 typedef AccountLoader =
     Future<List<Account>> Function(String query, {String? tag});
+typedef DeletedAccountLoader = Future<List<Account>> Function();
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.onLock, this.accountLoader});
+  const HomePage({
+    super.key,
+    this.onLock,
+    this.accountLoader,
+    this.deletedAccountLoader,
+  });
 
   final VoidCallback? onLock;
   final AccountLoader? accountLoader;
+  final DeletedAccountLoader? deletedAccountLoader;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
-enum _HomeAction { import, exportBackup, restoreBackup, audit, security, lock }
+enum _HomeAction {
+  import,
+  exportBackup,
+  restoreBackup,
+  trash,
+  audit,
+  security,
+  lock,
+}
 
 enum _AccountAction { copyPassword, copyTotp, edit, delete }
 
@@ -93,9 +109,17 @@ class _HomePageState extends State<HomePage> {
   bool _searching = false;
   String? _loadError;
   int _reloadSeq = 0;
+  int _trashCount = 0;
 
   AccountLoader get _loadAccounts =>
       widget.accountLoader ?? DatabaseHelper.instance.listAccounts;
+
+  Future<List<Account>> _loadDeletedAccounts() {
+    final loader = widget.deletedAccountLoader;
+    if (loader != null) return loader();
+    if (widget.accountLoader != null) return Future.value(const []);
+    return DatabaseHelper.instance.listDeletedAccounts();
+  }
 
   @override
   void initState() {
@@ -123,8 +147,10 @@ class _HomePageState extends State<HomePage> {
     }
 
     late final List<Account> allAccounts;
+    late final List<Account> deletedAccounts;
     try {
       allAccounts = await _loadAccounts('', tag: '');
+      deletedAccounts = await _loadDeletedAccounts();
     } catch (_) {
       if (!mounted || seq != _reloadSeq) return;
       setState(() {
@@ -150,6 +176,7 @@ class _HomePageState extends State<HomePage> {
         category: _selectedCategory,
       );
       _allTags = tags;
+      _trashCount = deletedAccounts.length;
       _loading = false;
       _loadError = null;
     });
@@ -271,8 +298,8 @@ class _HomePageState extends State<HomePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除账号'),
-        content: Text('确定删除「${account.title}」吗？'),
+        title: const Text('移至回收站？'),
+        content: Text('「${account.title}」可在 30 天内恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -280,14 +307,19 @@ class _HomePageState extends State<HomePage> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
+            child: const Text('移至回收站'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
-    await DatabaseHelper.instance.deleteAccount(account.id!);
-    _reload();
+    final deleted = await DatabaseHelper.instance.deleteAccount(account.id!);
+    if (deleted > 0) {
+      await _reload();
+      _showMessage('账号已移至回收站');
+    } else {
+      _showMessage('操作失败，请重试');
+    }
   }
 
   Future<void> _copyPassword(Account account) async {
@@ -419,7 +451,7 @@ class _HomePageState extends State<HomePage> {
     late final String content;
     try {
       content = await _runWithProgress('正在加密备份…', () async {
-        final accounts = await DatabaseHelper.instance.listAccounts('');
+        final accounts = await DatabaseHelper.instance.listAccountsForBackup();
         return EncryptedVaultBackup.create(accounts, password);
       });
     } catch (_) {
@@ -506,12 +538,17 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
 
       final restoreCount = backup!.accounts.length;
+      final restoreTrashCount = backup.accounts
+          .where((account) => account.deletedAt != null)
+          .length;
+      final restoreActiveCount = restoreCount - restoreTrashCount;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('恢复加密备份？'),
           content: Text(
-            '将用备份中的 $restoreCount 条账号替换当前 ${_allAccountsData.length} 条账号。',
+            '将用备份中的 $restoreActiveCount 条账号和 $restoreTrashCount 条回收站记录，'
+            '替换当前 ${_allAccountsData.length} 条账号和 $_trashCount 条回收站记录。',
           ),
           actions: [
             TextButton(
@@ -694,6 +731,9 @@ class _HomePageState extends State<HomePage> {
       case _HomeAction.restoreBackup:
         _restoreEncryptedBackup();
         break;
+      case _HomeAction.trash:
+        _openTrash();
+        break;
       case _HomeAction.audit:
         _openSecurityAudit();
         break;
@@ -714,6 +754,13 @@ class _HomePageState extends State<HomePage> {
         builder: (_) => SecurityAuditPage(accounts: _allAccountsData),
       ),
     );
+    if (mounted) await _reload();
+  }
+
+  Future<void> _openTrash() async {
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute(builder: (_) => const TrashPage()));
     if (mounted) await _reload();
   }
 
@@ -739,6 +786,11 @@ class _HomePageState extends State<HomePage> {
               leading: const Icon(Icons.upload_file_outlined),
               title: const Text('导入账号'),
               onTap: () => Navigator.of(context).pop(_HomeAction.import),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: Text('回收站 ($_trashCount)'),
+              onTap: () => Navigator.of(context).pop(_HomeAction.trash),
             ),
             ListTile(
               leading: const Icon(Icons.health_and_safety_outlined),
@@ -910,8 +962,8 @@ class _HomePageState extends State<HomePage> {
                   tooltip: '更多',
                   onSelected: _handleHomeAction,
                   icon: const Icon(Icons.more_vert, size: 29),
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
                       value: _HomeAction.exportBackup,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -919,7 +971,7 @@ class _HomePageState extends State<HomePage> {
                         title: Text('导出加密备份'),
                       ),
                     ),
-                    PopupMenuItem(
+                    const PopupMenuItem(
                       value: _HomeAction.restoreBackup,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -927,7 +979,7 @@ class _HomePageState extends State<HomePage> {
                         title: Text('恢复加密备份'),
                       ),
                     ),
-                    PopupMenuItem(
+                    const PopupMenuItem(
                       value: _HomeAction.import,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -936,6 +988,14 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     PopupMenuItem(
+                      value: _HomeAction.trash,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.delete_outline),
+                        title: Text('回收站 ($_trashCount)'),
+                      ),
+                    ),
+                    const PopupMenuItem(
                       value: _HomeAction.audit,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -943,7 +1003,7 @@ class _HomePageState extends State<HomePage> {
                         title: Text('安全检查'),
                       ),
                     ),
-                    PopupMenuItem(
+                    const PopupMenuItem(
                       value: _HomeAction.security,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -951,7 +1011,7 @@ class _HomePageState extends State<HomePage> {
                         title: Text('安全设置'),
                       ),
                     ),
-                    PopupMenuItem(
+                    const PopupMenuItem(
                       value: _HomeAction.lock,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,

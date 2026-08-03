@@ -10,6 +10,7 @@ import 'package:account_book/security/password_audit.dart';
 import 'package:account_book/settings/app_settings.dart';
 import 'package:account_book/totp/totp_service.dart';
 import 'package:account_book/widgets/password_generator_sheet.dart';
+import 'package:account_book/pages/trash_page.dart';
 
 void main() {
   final accounts = [
@@ -67,6 +68,16 @@ void main() {
       MaterialApp(
         home: HomePage(
           accountLoader: loadAccounts,
+          deletedAccountLoader: () async => [
+            Account(
+              id: 99,
+              title: '已删除账号',
+              username: 'deleted@example.com',
+              password: 'deleted-secret',
+              extra: '',
+              deletedAt: DateTime.now().millisecondsSinceEpoch,
+            ),
+          ],
           onLock: () => locked = true,
         ),
       ),
@@ -140,6 +151,7 @@ void main() {
     expect(find.text('恢复加密备份'), findsOneWidget);
     expect(find.text('导入账号'), findsOneWidget);
     expect(find.text('安全检查'), findsOneWidget);
+    expect(find.text('回收站 (1)'), findsOneWidget);
     await tester.tap(find.text('安全设置'));
     await tester.pumpAndSettle();
     expect(find.text('修改主密码'), findsOneWidget);
@@ -358,6 +370,62 @@ void main() {
     expect(find.text('容易猜到的密码'), findsOneWidget);
     expect(find.text('一年以上未更新'), findsOneWidget);
     expect(find.text('尚未配置动态验证码'), findsOneWidget);
+  });
+
+  testWidgets('回收站恢复账号并支持永久删除', (tester) async {
+    final now = DateTime(2026, 8, 4);
+    final accounts = [
+      Account(
+        id: 21,
+        title: '可恢复账号',
+        username: 'restore-user',
+        password: 'restore-secret',
+        extra: '',
+        deletedAt: now.millisecondsSinceEpoch,
+      ),
+      Account(
+        id: 22,
+        title: '待删除账号',
+        username: 'delete-user',
+        password: 'delete-secret',
+        extra: '',
+        deletedAt: now.millisecondsSinceEpoch,
+      ),
+    ];
+    final restored = <int>[];
+    final permanentlyDeleted = <int>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TrashPage(
+          accountLoader: () async => accounts,
+          accountRestorer: (id) async {
+            restored.add(id);
+            return 1;
+          },
+          accountDeleter: (id) async {
+            permanentlyDeleted.add(id);
+            return 1;
+          },
+          now: now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('可恢复账号'), findsOneWidget);
+    expect(find.textContaining('还剩 30 天'), findsNWidgets(2));
+
+    await tester.tap(find.byTooltip('恢复账号').first);
+    await tester.pumpAndSettle();
+    expect(restored, [21]);
+    expect(find.text('可恢复账号'), findsNothing);
+
+    await tester.tap(find.byTooltip('永久删除'));
+    await tester.pumpAndSettle();
+    expect(find.text('永久删除账号？'), findsOneWidget);
+    await tester.tap(find.text('永久删除'));
+    await tester.pumpAndSettle();
+    expect(permanentlyDeleted, [22]);
+    expect(find.text('回收站为空'), findsOneWidget);
   });
 
   testWidgets('编辑页支持 otpauth URI 和仅 TOTP 条目', (tester) async {

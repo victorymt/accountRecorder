@@ -1,17 +1,68 @@
-# account_book
+# 账号本子
 
-A new Flutter project.
+一个面向 Android 的本地密码与动态验证码管理器。账号数据保存在应用自己的私有目录中，应用之外的普通软件无法直接读取。
 
-## Getting Started
+![界面预览](screen.png)
 
-This project is a starting point for a Flutter application.
+## 功能
 
-A few resources to get you started if this is your first Flutter project:
+- 主密码解锁，并支持后台自动锁定
+- 指纹解锁（使用设备系统生物识别能力）
+- 账号增删改查、收藏和标签筛选
+- 密码强度评估与安全审计
+- 安全密码生成器，支持长度、字符集和易混淆字符设置
+- TOTP 动态验证码：手动录入或扫描二维码，支持常见算法、位数和周期配置
+- 敏感内容复制后自动清理剪贴板
+- 从“账号盒子”格式导入账号
+- 加密备份与恢复
+- 加密回收站：删除后可恢复、永久删除或清空，删除超过 30 天自动清理
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 数据安全
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- 密码、用户名、备注、标签、TOTP 配置和回收站状态都写入加密 payload。
+- 密钥由主密码派生；密码库使用 AES-256-GCM 加密并带完整性校验。
+- 生物识别只用于保护设备上的 Vault Key，不会替代主密码，也不会把主密码写入本地。
+- 备份文件使用独立密码、随机盐和 AES-256-GCM 加密。忘记备份密码时无法恢复备份内容。
+- 应用关闭或后台锁定时会关闭数据库连接并清理内存中的敏感密钥。
+
+## 回收站规则
+
+普通删除会将账号标记为已删除并移入回收站，因此不会出现在账号列表、搜索、动态密码或安全审计中。回收站入口位于首页工具菜单。
+
+回收站中的账号可以恢复，也可以永久删除。永久删除操作只对已在回收站中的账号开放；进入回收站超过 30 天的账号会在数据库打开时自动清理。加密备份会同时保存活动账号和回收站账号，恢复时保留其删除状态。
+
+## 开发环境
+
+- Flutter SDK（项目当前 Dart SDK 约束为 `^3.12.2`）
+- Android SDK 与可用的 Android 设备或模拟器
+
+安装依赖并运行开发版本：
+
+```bash
+flutter pub get
+flutter run
+```
+
+构建 Android Release APK：
+
+```bash
+flutter build apk --release
+```
+
+APK 输出路径为 `build/app/outputs/flutter-apk/app-release.apk`。
+
+## 测试与检查
+
+```bash
+flutter analyze
+flutter test
+```
+
+测试覆盖密码库迁移、主密码与 Vault Key 解锁、加密备份、账号导入、TOTP、密码安全审计及回收站生命周期。
+
+## 权限说明
+
+- `USE_BIOMETRIC` / `USE_FINGERPRINT`：启用指纹解锁。
+- `CAMERA`：扫描 TOTP 二维码；不扫描时不会使用摄像头。
+
+本项目默认不配置云同步服务，备份文件由用户自行保管。

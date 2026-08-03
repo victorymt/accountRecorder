@@ -37,6 +37,7 @@ class VaultBackupData {
       account.totp?.wipe();
       account
         ..totp = null
+        ..deletedAt = null
         ..secretsDecrypted = false;
     }
     accounts.clear();
@@ -220,6 +221,7 @@ class EncryptedVaultBackup {
       'totp': account.totp?.toJson(),
       'createdAt': createdAt,
       'updatedAt': updatedAt,
+      'deletedAt': account.deletedAt,
     };
   }
 
@@ -232,6 +234,7 @@ class EncryptedVaultBackup {
     final tags = raw['tags'];
     final createdAt = raw['createdAt'];
     final updatedAt = raw['updatedAt'];
+    final deletedAt = raw['deletedAt'];
     if (id is! int ||
         id <= 0 ||
         title is! String ||
@@ -244,7 +247,8 @@ class EncryptedVaultBackup {
         createdAt is! int ||
         createdAt <= 0 ||
         updatedAt is! int ||
-        updatedAt <= 0) {
+        updatedAt <= 0 ||
+        (deletedAt != null && (deletedAt is! int || deletedAt <= 0))) {
       throw const BackupDecryptException();
     }
     return Account(
@@ -257,6 +261,7 @@ class EncryptedVaultBackup {
       totp: raw['totp'] == null ? null : TotpConfig.fromJson(raw['totp']),
       createdAt: createdAt,
       updatedAt: updatedAt,
+      deletedAt: deletedAt as int?,
       secretsDecrypted: true,
     );
   }

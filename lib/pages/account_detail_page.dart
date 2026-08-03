@@ -104,8 +104,8 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除账号'),
-        content: Text('确定删除「${widget.account.title}」吗？'),
+        title: const Text('移至回收站？'),
+        content: Text('「${widget.account.title}」可在 30 天内恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -113,7 +113,7 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
+            child: const Text('移至回收站'),
           ),
         ],
       ),
@@ -129,7 +129,7 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
       Navigator.of(context).pop(true);
     } else {
       setState(() => _deleting = false);
-      _showMessage('删除失败，请重试');
+      _showMessage('操作失败，请重试');
     }
   }
 

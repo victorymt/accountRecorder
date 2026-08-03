@@ -17,6 +17,7 @@ class Account {
     this.totp,
     this.createdAt,
     this.updatedAt,
+    this.deletedAt,
     this.secretsDecrypted = false,
   });
 
@@ -29,6 +30,7 @@ class Account {
   TotpConfig? totp;
   final int? createdAt;
   int? updatedAt;
+  int? deletedAt;
   bool secretsDecrypted;
 
   static const String tagsSeparator = ',';
@@ -116,6 +118,7 @@ class DatabaseHelper {
   static const String _dbName = 'accounts.db';
   static const String _legacyTable = 'accounts';
   static const String _vaultTable = 'vault_items';
+  static const Duration trashRetention = Duration(days: 30);
 
   static const String _legacySaltKey = 'salt';
   static const String _legacyVerifierKey = 'verifier';
@@ -501,16 +504,34 @@ class DatabaseHelper {
 
   Future<List<Account>> listAccounts(String query, {String? tag}) async {
     final accounts = await _getCache();
+    await _purgeExpiredTrash(accounts, DateTime.now().millisecondsSinceEpoch);
     final normalizedQuery = query.toLowerCase();
     return accounts
         .where(
           (account) =>
+              account.deletedAt == null &&
               (normalizedQuery.isEmpty ||
                   account.title.toLowerCase().contains(normalizedQuery) ||
                   account.username.toLowerCase().contains(normalizedQuery)) &&
               (tag == null || tag.isEmpty || account.tags.contains(tag)),
         )
         .toList();
+  }
+
+  Future<List<Account>> listDeletedAccounts() async {
+    final accounts = await _getCache();
+    await _purgeExpiredTrash(accounts, DateTime.now().millisecondsSinceEpoch);
+    final deleted = accounts
+        .where((account) => account.deletedAt != null)
+        .toList();
+    deleted.sort((left, right) => right.deletedAt!.compareTo(left.deletedAt!));
+    return deleted;
+  }
+
+  Future<List<Account>> listAccountsForBackup() async {
+    final accounts = await _getCache();
+    await _purgeExpiredTrash(accounts, DateTime.now().millisecondsSinceEpoch);
+    return accounts.toList();
   }
 
   Future<List<Account>> _getCache() async {
@@ -578,6 +599,7 @@ class DatabaseHelper {
           totp: account.totp?.copy(),
           createdAt: account.createdAt ?? now,
           updatedAt: now,
+          deletedAt: account.deletedAt,
           secretsDecrypted: true,
         ),
       );
@@ -618,7 +640,9 @@ class DatabaseHelper {
   }
 
   Future<ImportPreview> previewImportAccounts(List<Account> accounts) async {
-    final existing = await _getCache();
+    final existing = (await _getCache()).where(
+      (account) => account.deletedAt == null,
+    );
     final keys = existing
         .map((account) => accountIdentityKey(account.title, account.username))
         .toSet();
@@ -640,7 +664,9 @@ class DatabaseHelper {
     if (key == null || accounts.isEmpty) {
       return const ImportResult(imported: 0, skipped: 0);
     }
-    final existingAccounts = await _getCache();
+    final existingAccounts = (await _getCache())
+        .where((account) => account.deletedAt == null)
+        .toList();
     final existingByKey = {
       for (final account in existingAccounts)
         accountIdentityKey(account.title, account.username): account,
@@ -724,6 +750,7 @@ class DatabaseHelper {
         'totp': account.totp?.toJson(),
         'createdAt': createdAt,
         'updatedAt': updatedAt,
+        'deletedAt': account.deletedAt,
       });
     }
 
@@ -754,25 +781,139 @@ class DatabaseHelper {
 
   Future<int> deleteAccount(int id) async {
     final db = await database;
+    final key = _vaultKey;
+    if (key == null) return 0;
+    final accounts = await _getCache();
+    final accountIndex = accounts.indexWhere((account) => account.id == id);
+    if (accountIndex < 0 || accounts[accountIndex].deletedAt != null) return 0;
+    final account = accounts[accountIndex];
+    final previousUpdatedAt = account.updatedAt;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    account
+      ..deletedAt = now
+      ..updatedAt = now;
+    try {
+      final count = await db.update(
+        _vaultTable,
+        _vaultUpdateForAccount(account, id, key, updatedAt: now),
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (count == 0) {
+        account
+          ..deletedAt = null
+          ..updatedAt = previousUpdatedAt;
+      }
+      return count;
+    } catch (_) {
+      account
+        ..deletedAt = null
+        ..updatedAt = previousUpdatedAt;
+      rethrow;
+    }
+  }
+
+  Future<int> restoreDeletedAccount(int id) async {
+    final db = await database;
+    final key = _vaultKey;
+    if (key == null) return 0;
+    final accounts = await _getCache();
+    final accountIndex = accounts.indexWhere((account) => account.id == id);
+    if (accountIndex < 0 || accounts[accountIndex].deletedAt == null) return 0;
+    final account = accounts[accountIndex];
+    final previousDeletedAt = account.deletedAt;
+    final previousUpdatedAt = account.updatedAt;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    account
+      ..deletedAt = null
+      ..updatedAt = now;
+    try {
+      final count = await db.update(
+        _vaultTable,
+        _vaultUpdateForAccount(account, id, key, updatedAt: now),
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (count == 0) {
+        account
+          ..deletedAt = previousDeletedAt
+          ..updatedAt = previousUpdatedAt;
+      }
+      return count;
+    } catch (_) {
+      account
+        ..deletedAt = previousDeletedAt
+        ..updatedAt = previousUpdatedAt;
+      rethrow;
+    }
+  }
+
+  Future<int> deleteAccountPermanently(int id) async {
+    final accounts = await _getCache();
+    final accountIndex = accounts.indexWhere((account) => account.id == id);
+    if (accountIndex < 0 || accounts[accountIndex].deletedAt == null) return 0;
+    final db = await database;
     final count = await db.delete(
       _vaultTable,
       where: 'id = ?',
       whereArgs: [id],
     );
     if (count > 0) {
-      final cached = _cache;
-      if (cached != null) {
-        final index = cached.indexWhere((account) => account.id == id);
-        if (index >= 0) {
-          final removed = cached.removeAt(index);
-          _wipeAccount(removed);
-        }
-      } else {
-        _generation++;
-        _cacheLoad = null;
-      }
+      final removed = accounts.removeAt(accountIndex);
+      _wipeAccount(removed);
     }
     return count;
+  }
+
+  Future<int> clearTrash() async {
+    final accounts = await _getCache();
+    final deleted = accounts
+        .where((account) => account.deletedAt != null && account.id != null)
+        .toList();
+    if (deleted.isEmpty) return 0;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final account in deleted) {
+        await txn.delete(_vaultTable, where: 'id = ?', whereArgs: [account.id]);
+      }
+    });
+    for (final account in deleted) {
+      accounts.remove(account);
+      _wipeAccount(account);
+    }
+    return deleted.length;
+  }
+
+  Future<int> purgeExpiredTrash({DateTime? now}) async {
+    final accounts = await _getCache();
+    return _purgeExpiredTrash(
+      accounts,
+      (now ?? DateTime.now()).millisecondsSinceEpoch,
+    );
+  }
+
+  Future<int> _purgeExpiredTrash(List<Account> accounts, int nowMs) async {
+    final cutoff = nowMs - trashRetention.inMilliseconds;
+    final expired = accounts
+        .where(
+          (account) =>
+              account.deletedAt != null &&
+              account.deletedAt! <= cutoff &&
+              account.id != null,
+        )
+        .toList();
+    if (expired.isEmpty) return 0;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final account in expired) {
+        await txn.delete(_vaultTable, where: 'id = ?', whereArgs: [account.id]);
+      }
+    });
+    for (final account in expired) {
+      accounts.remove(account);
+      _wipeAccount(account);
+    }
+    return expired.length;
   }
 
   Future<void> close() async {
@@ -910,6 +1051,7 @@ String _encryptAccountPayload(Account account, int id, Uint8List key) {
     'extra': account.extra,
     'tags': account.tags,
     'totp': account.totp?.toJson(),
+    'deletedAt': account.deletedAt,
   });
   return CryptoHelper.encrypt(
     payload,
@@ -933,6 +1075,10 @@ Account _decryptVaultRow(Map<String, Object?> row, Uint8List key) {
   if (rawTags is! List) {
     throw const FormatException('Invalid vault item tags');
   }
+  final deletedAt = decoded['deletedAt'];
+  if (deletedAt != null && (deletedAt is! int || deletedAt <= 0)) {
+    throw const FormatException('Invalid vault item deletion time');
+  }
   return Account(
     id: id,
     title: decoded['title'] as String,
@@ -943,6 +1089,7 @@ Account _decryptVaultRow(Map<String, Object?> row, Uint8List key) {
     totp: decoded['totp'] == null ? null : TotpConfig.fromJson(decoded['totp']),
     createdAt: row['created_at'] as int,
     updatedAt: row['updated_at'] as int,
+    deletedAt: deletedAt as int?,
     secretsDecrypted: true,
   );
 }
@@ -1013,6 +1160,7 @@ List<Map<String, Object?>> _encryptRestoredRowsIsolate(
             : TotpConfig.fromJson(snapshot['totp']),
         createdAt: snapshot['createdAt'] as int,
         updatedAt: snapshot['updatedAt'] as int,
+        deletedAt: snapshot['deletedAt'] as int?,
         secretsDecrypted: true,
       );
       try {
@@ -1086,5 +1234,6 @@ void _wipeAccount(Account account) {
   account.tags = const [];
   account.totp?.wipe();
   account.totp = null;
+  account.deletedAt = null;
   account.secretsDecrypted = false;
 }
