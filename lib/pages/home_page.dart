@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -7,10 +8,12 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../app_lock.dart';
+import '../backup/encrypted_vault_backup.dart';
 import '../db/database_helper.dart';
 import '../import/accountbox_importer.dart';
 import '../security/biometric_vault.dart';
 import '../security/sensitive_clipboard.dart';
+import '../widgets/backup_password_dialog.dart';
 import 'account_detail_page.dart';
 import 'edit_page.dart';
 
@@ -27,7 +30,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-enum _HomeAction { import, biometric, lock }
+enum _HomeAction { import, exportBackup, restoreBackup, biometric, lock }
 
 enum _AccountAction { copyPassword, edit, delete }
 
@@ -335,6 +338,187 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<T> _runWithProgress<T>(
+    String message,
+    Future<T> Function() action,
+  ) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 18),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        ),
+      ),
+    );
+    navigator.push<void>(route);
+    await WidgetsBinding.instance.endOfFrame;
+    try {
+      return await action();
+    } finally {
+      if (route.isActive) navigator.removeRoute(route);
+    }
+  }
+
+  Future<void> _exportEncryptedBackup() async {
+    final password = await BackupPasswordDialog.show(
+      context,
+      mode: BackupPasswordMode.create,
+    );
+    if (password == null || !mounted) return;
+
+    late final String content;
+    try {
+      content = await _runWithProgress('正在加密备份…', () async {
+        final accounts = await DatabaseHelper.instance.listAccounts('');
+        return EncryptedVaultBackup.create(accounts, password);
+      });
+    } catch (_) {
+      _showMessage('备份创建失败，请重试');
+      return;
+    }
+    if (!mounted) return;
+
+    final bytes = Uint8List.fromList(utf8.encode(content));
+    String? savedPath;
+    AppLock.pickerActive = true;
+    try {
+      final mobile = Platform.isAndroid || Platform.isIOS;
+      savedPath = await FilePicker.platform.saveFile(
+        dialogTitle: '保存加密备份',
+        fileName: _backupFileName(DateTime.now()),
+        type: FileType.any,
+        bytes: mobile ? bytes : null,
+      );
+      if (savedPath != null && !mobile) {
+        await File(savedPath).writeAsBytes(bytes, flush: true);
+      }
+    } catch (_) {
+      _showMessage('备份保存失败，请重试');
+      return;
+    } finally {
+      AppLock.pickerActive = false;
+      bytes.fillRange(0, bytes.length, 0);
+    }
+    if (savedPath != null) _showMessage('加密备份已保存');
+  }
+
+  Future<void> _restoreEncryptedBackup() async {
+    FilePickerResult? picked;
+    AppLock.pickerActive = true;
+    try {
+      picked = await FilePicker.platform.pickFiles(type: FileType.any);
+    } finally {
+      AppLock.pickerActive = false;
+    }
+    if (picked == null || picked.files.isEmpty || !mounted) return;
+    final file = picked.files.single;
+    if (file.size > EncryptedVaultBackup.maxFileBytes) {
+      _showMessage('备份文件过大');
+      return;
+    }
+    final path = file.path;
+    if (path == null) {
+      _showMessage('无法读取所选备份');
+      return;
+    }
+
+    late final String content;
+    try {
+      content = await File(path).readAsString();
+    } catch (_) {
+      _showMessage('无法读取所选备份');
+      return;
+    }
+    if (!mounted) return;
+    final password = await BackupPasswordDialog.show(
+      context,
+      mode: BackupPasswordMode.unlock,
+    );
+    if (password == null || !mounted) return;
+
+    VaultBackupData? backup;
+    try {
+      try {
+        backup = await _runWithProgress(
+          '正在验证备份…',
+          () => EncryptedVaultBackup.open(content, password),
+        );
+      } on BackupFormatException {
+        _showMessage('不是有效的账号本子备份');
+        return;
+      } on BackupDecryptException {
+        _showMessage('备份密码错误或文件已损坏');
+        return;
+      } catch (_) {
+        _showMessage('备份验证失败');
+        return;
+      }
+      if (!mounted) return;
+
+      final restoreCount = backup!.accounts.length;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('恢复加密备份？'),
+          content: Text(
+            '将用备份中的 $restoreCount 条账号替换当前 ${_allAccountsData.length} 条账号。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).pop(true),
+              icon: const Icon(Icons.restore),
+              label: const Text('恢复'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      try {
+        await _runWithProgress(
+          '正在恢复账号…',
+          () => DatabaseHelper.instance.restoreAccountsAtomically(
+            backup!.accounts,
+          ),
+        );
+      } catch (_) {
+        _showMessage('恢复失败，当前账号未更改');
+        return;
+      }
+      _selectedCategory = _allAccounts;
+      await _reload();
+      _showMessage('已恢复 $restoreCount 条账号');
+    } finally {
+      backup?.wipe();
+    }
+  }
+
+  String _backupFileName(DateTime dateTime) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    final date =
+        '${dateTime.year}${twoDigits(dateTime.month)}'
+        '${twoDigits(dateTime.day)}';
+    final time = '${twoDigits(dateTime.hour)}${twoDigits(dateTime.minute)}';
+    return 'account-book-backup-$date-$time.abvault';
+  }
+
   Future<void> _import() async {
     FilePickerResult? picked;
     AppLock.pickerActive = true;
@@ -467,6 +651,12 @@ class _HomePageState extends State<HomePage> {
       case _HomeAction.import:
         _import();
         break;
+      case _HomeAction.exportBackup:
+        _exportEncryptedBackup();
+        break;
+      case _HomeAction.restoreBackup:
+        _restoreEncryptedBackup();
+        break;
       case _HomeAction.biometric:
         _configureBiometric();
         break;
@@ -536,6 +726,16 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              leading: const Icon(Icons.file_download_outlined),
+              title: const Text('导出加密备份'),
+              onTap: () => Navigator.of(context).pop(_HomeAction.exportBackup),
+            ),
+            ListTile(
+              leading: const Icon(Icons.restore_page_outlined),
+              title: const Text('恢复加密备份'),
+              onTap: () => Navigator.of(context).pop(_HomeAction.restoreBackup),
+            ),
             ListTile(
               leading: const Icon(Icons.upload_file_outlined),
               title: const Text('导入账号'),
@@ -707,6 +907,22 @@ class _HomePageState extends State<HomePage> {
                   onSelected: _handleHomeAction,
                   icon: const Icon(Icons.more_vert, size: 29),
                   itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: _HomeAction.exportBackup,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.file_download_outlined),
+                        title: Text('导出加密备份'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _HomeAction.restoreBackup,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.restore_page_outlined),
+                        title: Text('恢复加密备份'),
+                      ),
+                    ),
                     PopupMenuItem(
                       value: _HomeAction.import,
                       child: ListTile(

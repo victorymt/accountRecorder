@@ -109,6 +109,8 @@ void main() {
 
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
+    expect(find.text('导出加密备份'), findsOneWidget);
+    expect(find.text('恢复加密备份'), findsOneWidget);
     expect(find.text('导入账号'), findsOneWidget);
     await tester.tap(find.text('锁定'));
     await tester.pumpAndSettle();

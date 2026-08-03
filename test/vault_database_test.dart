@@ -147,6 +147,82 @@ void main() {
     },
     timeout: const Timeout(Duration(minutes: 3)),
   );
+
+  test('恢复账号使用单一事务，写入失败时保留原 Vault', () async {
+    final path =
+        '/tmp/account_book_restore_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
+    addTearDown(() => databaseFactory.deleteDatabase(path));
+    const password = 'RestorePass123';
+
+    final helper = DatabaseHelper.forTesting(path);
+    final vaultKey = await helper.setupMasterPassword(password);
+    vaultKey.fillRange(0, vaultKey.length, 0);
+    await helper.insertAccount(
+      Account(
+        title: '原账号',
+        username: 'original-user',
+        password: 'original-secret',
+        extra: '',
+      ),
+    );
+
+    final duplicateIds = [
+      Account(
+        id: 7,
+        title: '恢复账号 A',
+        username: 'a',
+        password: 'a-secret',
+        extra: '',
+        createdAt: 1700000000000,
+        updatedAt: 1700000001000,
+      ),
+      Account(
+        id: 7,
+        title: '恢复账号 B',
+        username: 'b',
+        password: 'b-secret',
+        extra: '',
+        createdAt: 1700000002000,
+        updatedAt: 1700000003000,
+      ),
+    ];
+    await expectLater(
+      helper.restoreAccountsAtomically(duplicateIds),
+      throwsA(isA<DatabaseException>()),
+    );
+    final unchanged = await helper.listAccounts('');
+    expect(unchanged, hasLength(1));
+    expect(unchanged.single.title, '原账号');
+    expect(unchanged.single.password, 'original-secret');
+
+    final restored = [
+      Account(
+        id: 12,
+        title: '已恢复账号',
+        username: 'restored-user',
+        password: 'restored-secret',
+        extra: '来自备份',
+        tags: const ['恢复'],
+        createdAt: 1700000010000,
+        updatedAt: 1700000011000,
+      ),
+    ];
+    expect(await helper.restoreAccountsAtomically(restored), 1);
+    final current = await helper.listAccounts('');
+    expect(current, hasLength(1));
+    expect(current.single.id, 12);
+    expect(current.single.title, '已恢复账号');
+    expect(current.single.tags, ['恢复']);
+    await helper.close();
+
+    final reopened = DatabaseHelper.forTesting(path);
+    final reopenedKey = await reopened.unlock(password);
+    expect(reopenedKey, hasLength(32));
+    reopenedKey?.fillRange(0, reopenedKey.length, 0);
+    final persisted = await reopened.listAccounts('');
+    expect(persisted.single.password, 'restored-secret');
+    await reopened.close();
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }
 
 Future<void> _createLegacyDatabase(String path, String password) async {

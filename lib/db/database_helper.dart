@@ -615,6 +615,63 @@ class DatabaseHelper {
     return ImportResult(imported: imported, skipped: skipped, updated: updated);
   }
 
+  Future<int> restoreAccountsAtomically(List<Account> accounts) async {
+    final db = await database;
+    final vaultKey = _vaultKey;
+    if (vaultKey == null) {
+      throw StateError('Vault is locked');
+    }
+
+    final snapshots = <Map<String, Object?>>[];
+    for (final account in accounts) {
+      final id = account.id;
+      final createdAt = account.createdAt;
+      final updatedAt = account.updatedAt;
+      if (id == null ||
+          id <= 0 ||
+          createdAt == null ||
+          createdAt <= 0 ||
+          updatedAt == null ||
+          updatedAt <= 0) {
+        throw ArgumentError('Invalid backup account');
+      }
+      snapshots.add({
+        'id': id,
+        'title': account.title,
+        'username': account.username,
+        'password': account.password,
+        'extra': account.extra,
+        'tags': List<String>.of(account.tags),
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+      });
+    }
+
+    final keyCopy = Uint8List.fromList(vaultKey);
+    late final List<Map<String, Object?>> encryptedRows;
+    try {
+      encryptedRows = await compute(_encryptRestoredRowsIsolate, (
+        snapshots,
+        keyCopy,
+      ));
+    } finally {
+      _wipeBytes(keyCopy);
+    }
+
+    await db.transaction((txn) async {
+      await txn.delete(_vaultTable);
+      for (final row in encryptedRows) {
+        await txn.insert(
+          _vaultTable,
+          row,
+          conflictAlgorithm: ConflictAlgorithm.abort,
+        );
+      }
+    });
+    _invalidateCache();
+    return encryptedRows.length;
+  }
+
   Future<int> deleteAccount(int id) async {
     final db = await database;
     final count = await db.delete(
@@ -852,6 +909,36 @@ List<Account> _decryptVaultRowsIsolate(
 ) {
   final (rows, key) = args;
   return [for (final row in rows) _decryptVaultRow(row, key)];
+}
+
+List<Map<String, Object?>> _encryptRestoredRowsIsolate(
+  (List<Map<String, Object?>>, Uint8List) args,
+) {
+  final (snapshots, key) = args;
+  final rows = <Map<String, Object?>>[];
+  try {
+    for (final snapshot in snapshots) {
+      final account = Account(
+        id: snapshot['id'] as int,
+        title: snapshot['title'] as String,
+        username: snapshot['username'] as String,
+        password: snapshot['password'] as String,
+        extra: snapshot['extra'] as String,
+        tags: (snapshot['tags'] as List).cast<String>().toList(),
+        createdAt: snapshot['createdAt'] as int,
+        updatedAt: snapshot['updatedAt'] as int,
+        secretsDecrypted: true,
+      );
+      try {
+        rows.add(_vaultRowForAccount(account, account.id!, key));
+      } finally {
+        _wipeAccount(account);
+      }
+    }
+    return rows;
+  } finally {
+    key.fillRange(0, key.length, 0);
+  }
 }
 
 List<Account> _decryptLegacyAccountsStrictIsolate(
