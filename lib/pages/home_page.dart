@@ -16,6 +16,7 @@ import '../security/sensitive_clipboard.dart';
 import '../settings/app_settings.dart';
 import '../totp/totp_service.dart';
 import '../widgets/backup_password_dialog.dart';
+import 'appearance_settings_page.dart';
 import 'account_detail_page.dart';
 import 'edit_page.dart';
 import 'security_audit_page.dart';
@@ -49,6 +50,7 @@ enum _HomeAction {
   trash,
   audit,
   security,
+  appearance,
   lock,
 }
 
@@ -742,6 +744,11 @@ class _HomePageState extends State<HomePage> {
           MaterialPageRoute(builder: (_) => const SecuritySettingsPage()),
         );
         break;
+      case _HomeAction.appearance:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(builder: (_) => const AppearanceSettingsPage()),
+        );
+        break;
       case _HomeAction.lock:
         widget.onLock?.call();
         break;
@@ -801,6 +808,11 @@ class _HomePageState extends State<HomePage> {
               leading: const Icon(Icons.security_outlined),
               title: const Text('安全设置'),
               onTap: () => Navigator.of(context).pop(_HomeAction.security),
+            ),
+            ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('界面设置'),
+              onTap: () => Navigator.of(context).pop(_HomeAction.appearance),
             ),
             ListTile(
               leading: const Icon(Icons.lock_outline),
@@ -901,7 +913,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final compactLayout = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         toolbarHeight: 60,
         elevation: 0,
@@ -1012,6 +1024,14 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     const PopupMenuItem(
+                      value: _HomeAction.appearance,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.palette_outlined),
+                        title: Text('界面设置'),
+                      ),
+                    ),
+                    const PopupMenuItem(
                       value: _HomeAction.lock,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -1079,7 +1099,10 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 10),
             Text(
               message,
-              style: const TextStyle(color: Color(0xFF777777), fontSize: 15),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 15,
+              ),
             ),
             const SizedBox(height: 6),
             IconButton(
@@ -1099,7 +1122,10 @@ class _HomePageState extends State<HomePage> {
           child: Text(
             noFilters ? '还没有账号，点击右上角 + 添加' : '没有匹配的结果',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 15),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 15,
+            ),
           ),
         ),
       );
@@ -1127,8 +1153,8 @@ class _HomePageState extends State<HomePage> {
                   account.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF282828),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 20,
                     fontWeight: FontWeight.w400,
                   ),
@@ -1164,8 +1190,8 @@ class _HomePageState extends State<HomePage> {
             account.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF282828),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
               fontSize: 20,
               fontWeight: FontWeight.w400,
             ),
@@ -1176,8 +1202,8 @@ class _HomePageState extends State<HomePage> {
               account.username.isEmpty ? '*' : account.username,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFB4B4B4),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontSize: 17,
                 fontWeight: FontWeight.w400,
               ),
@@ -1212,8 +1238,6 @@ class _CategorySidebar extends StatelessWidget {
     required this.onSettings,
   });
 
-  static const _brandGreen = Color(0xFF00965E);
-
   final String selectedCategory;
   final List<String> tags;
   final ValueChanged<String> onSelected;
@@ -1222,7 +1246,7 @@ class _CategorySidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: const Color(0xFFFAFAFA),
+      color: Theme.of(context).colorScheme.surface,
       child: ListView(
         padding: const EdgeInsets.only(top: 25, bottom: 12),
         children: [
@@ -1272,7 +1296,7 @@ class _CompactCategoryBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFF4F5F5),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: InkWell(
         onTap: onTap,
         child: SizedBox(
@@ -1281,10 +1305,10 @@ class _CompactCategoryBar extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.filter_list,
                   size: 20,
-                  color: Color(0xFF666666),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1292,8 +1316,8 @@ class _CompactCategoryBar extends StatelessWidget {
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF333333),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
@@ -1301,13 +1325,16 @@ class _CompactCategoryBar extends StatelessWidget {
                 ),
                 Text(
                   '$count 项',
-                  style: const TextStyle(
-                    color: Color(0xFF888888),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 14,
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(Icons.expand_more, color: Color(0xFF777777)),
+                Icon(
+                  Icons.expand_more,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ],
             ),
           ),
@@ -1344,8 +1371,8 @@ class _CategoryButton extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected
-                    ? _CategorySidebar._brandGreen
-                    : const Color(0xFF2C2C2C),
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.onSurface,
                 fontSize: 18,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
               ),

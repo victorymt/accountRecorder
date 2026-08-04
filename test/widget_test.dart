@@ -163,6 +163,16 @@ void main() {
 
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('界面设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('文字大小'), findsOneWidget);
+    expect(find.text('字体'), findsOneWidget);
+    expect(find.text('界面主题'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('锁定'));
     await tester.pumpAndSettle();
     expect(locked, isTrue);

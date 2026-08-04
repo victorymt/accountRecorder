@@ -255,11 +255,14 @@ class _TotpDetailField extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const SizedBox(
+          SizedBox(
             width: 58,
             child: Text(
               '验证码',
-              style: TextStyle(color: Color(0xFF777777), fontSize: 14),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 14,
+              ),
             ),
           ),
           Expanded(
@@ -268,8 +271,8 @@ class _TotpDetailField extends StatelessWidget {
               children: [
                 Text(
                   code,
-                  style: const TextStyle(
-                    color: Color(0xFF222222),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 25,
                     fontWeight: FontWeight.w600,
                     fontFamily: 'monospace',
@@ -283,8 +286,8 @@ class _TotpDetailField extends StatelessWidget {
                   ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF888888),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 13,
                   ),
                 ),
@@ -332,7 +335,10 @@ class _DetailField extends StatelessWidget {
             width: 58,
             child: Text(
               label,
-              style: const TextStyle(color: Color(0xFF777777), fontSize: 14),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 14,
+              ),
             ),
           ),
           Expanded(
@@ -340,8 +346,8 @@ class _DetailField extends StatelessWidget {
               value,
               style: TextStyle(
                 color: muted
-                    ? const Color(0xFF999999)
-                    : const Color(0xFF222222),
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : Theme.of(context).colorScheme.onSurface,
                 fontSize: 17,
               ),
             ),

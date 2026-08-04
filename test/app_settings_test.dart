@@ -30,6 +30,19 @@ void main() {
     expect(await File('${settingsFile.path}.tmp').exists(), isFalse);
   });
 
+  test('界面设置保存在配置文件并可重新加载', () async {
+    final settings = AppSettings.forTesting(settingsFile);
+    await settings.setTextScaleFactor(1.3);
+    await settings.setFontFamily('serif');
+    await settings.setThemeMode(AppThemeMode.dark);
+
+    final reloaded = AppSettings.forTesting(settingsFile);
+    await reloaded.load();
+    expect(reloaded.textScaleFactor, 1.3);
+    expect(reloaded.fontFamily, 'serif');
+    expect(reloaded.themeMode, AppThemeMode.dark);
+  });
+
   test('无效或损坏的持久化时间回退到安全默认值', () async {
     await settingsFile.writeAsString(
       jsonEncode({
@@ -67,6 +80,14 @@ void main() {
       throwsArgumentError,
     );
     expect(await settingsFile.exists(), isFalse);
+  });
+
+  test('不允许保存无效界面选项', () async {
+    final settings = AppSettings.forTesting(settingsFile);
+    expect(() => settings.setTextScaleFactor(1.1), throwsArgumentError);
+    expect(() => settings.setFontFamily('unknown'), throwsArgumentError);
+    await settings.setThemeMode(AppThemeMode.light);
+    expect(settings.themeMode, AppThemeMode.light);
   });
 
   test('安全时间使用统一的界面文案', () {
