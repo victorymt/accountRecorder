@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:account_book/import/accountbox_importer.dart';
@@ -41,5 +43,33 @@ void main() {
   test('空内容返回空列表', () {
     expect(AccountBoxImporter.parse(''), isEmpty);
     expect(AccountBoxImporter.parse('不是JSON'), isEmpty);
+  });
+
+  test('畸形列表结构不会触发类型转换异常', () {
+    expect(AccountBoxImporter.parse('{"accountList":"invalid"}'), isEmpty);
+    expect(
+      AccountBoxImporter.parse(
+        '{"accountList":[{"name":"账号","accountItemList":{},"tagList":[]}]}',
+      ),
+      isEmpty,
+    );
+    expect(
+      AccountBoxImporter.parse(
+        '{"accountList":[{"name":"账号","accountItemList":[],"tagList":{}}]}',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('账号数量超过上限时拒绝整个文件', () {
+    final accounts = List.filled(
+      AccountBoxImporter.maxAccountCount + 1,
+      const <String, Object?>{'name': '账号'},
+    );
+
+    expect(
+      () => AccountBoxImporter.parse('{"accountList":${jsonEncode(accounts)}}'),
+      throwsA(isA<FormatException>()),
+    );
   });
 }

@@ -19,9 +19,15 @@ class ImportAccount {
 class AccountBoxImporter {
   AccountBoxImporter._();
 
+  static const int maxFileBytes = 16 * 1024 * 1024;
+  static const int maxAccountCount = 10000;
+
   /// 解析「账号盒子」导出文件（ACCOUNTBOX_JSON_13 头 + JSON）。
   /// 无法解析时返回空列表。
   static List<ImportAccount> parse(String content) {
+    if (utf8.encode(content).length > maxFileBytes) {
+      throw const FormatException('Import file is too large');
+    }
     var body = content;
     final firstNewline = content.indexOf('\n');
     if (firstNewline > 0) {
@@ -36,25 +42,38 @@ class AccountBoxImporter {
     } catch (_) {
       return const [];
     }
-    final list = decoded is Map<String, dynamic>
-        ? (decoded['accountList'] as List<dynamic>? ?? [])
-        : decoded is List ? decoded : <dynamic>[];
+    final Object? rawList = decoded is Map
+        ? decoded['accountList']
+        : decoded is List
+        ? decoded
+        : null;
+    if (rawList is! List) return const [];
+    if (rawList.length > maxAccountCount) {
+      throw const FormatException('Too many accounts');
+    }
 
     final result = <ImportAccount>[];
-    for (final raw in list) {
-      if (raw is! Map<String, dynamic>) continue;
-      final title = (raw['name'] as String? ?? '').trim();
+    for (final raw in rawList) {
+      if (raw is! Map) continue;
+      final rawTitle = raw['name'];
+      if (rawTitle is! String) continue;
+      final title = rawTitle.trim();
       if (title.isEmpty) continue;
 
       String username = '';
       String password = '';
       String? note;
       final others = <String>[];
-      final items = raw['accountItemList'] as List<dynamic>? ?? [];
+      final rawItems = raw['accountItemList'];
+      if (rawItems != null && rawItems is! List) continue;
+      final items = rawItems is List ? rawItems : const [];
       for (final entry in items) {
-        if (entry is! Map<String, dynamic>) continue;
-        final name = (entry['itemName'] as String? ?? '').trim();
-        final value = entry['itemValue'] as String? ?? '';
+        if (entry is! Map) continue;
+        final rawName = entry['itemName'];
+        final rawValue = entry['itemValue'];
+        if (rawName is! String || rawValue is! String) continue;
+        final name = rawName.trim();
+        final value = rawValue;
         switch (name) {
           case '账号':
             username = value.trim();
@@ -67,9 +86,13 @@ class AccountBoxImporter {
         }
       }
 
-      final tags = (raw['tagList'] as List<dynamic>? ?? [])
-          .whereType<Map<String, dynamic>>()
-          .map((t) => (t['tagName'] as String? ?? '').trim())
+      final rawTags = raw['tagList'];
+      if (rawTags != null && rawTags is! List) continue;
+      final tags = (rawTags is List ? rawTags : const [])
+          .whereType<Map>()
+          .map((tag) => tag['tagName'])
+          .whereType<String>()
+          .map((tag) => tag.trim())
           .where((t) => t.isNotEmpty)
           .toList();
 
@@ -77,13 +100,15 @@ class AccountBoxImporter {
         if (note != null && note.isNotEmpty) note,
         ...others,
       ];
-      result.add(ImportAccount(
-        title: title,
-        username: username,
-        password: password,
-        extra: extraParts.join('\n'),
-        tags: tags,
-      ));
+      result.add(
+        ImportAccount(
+          title: title,
+          username: username,
+          password: password,
+          extra: extraParts.join('\n'),
+          tags: tags,
+        ),
+      );
     }
     return result;
   }

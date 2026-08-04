@@ -14,6 +14,8 @@ typedef TotpQrScanner = Future<String?> Function(BuildContext context);
 typedef PasswordGeneratorPicker =
     Future<String?> Function(BuildContext context);
 
+const _reservedTagNames = {'全部账号', '动态密码'};
+
 class EditPage extends StatefulWidget {
   const EditPage({
     super.key,
@@ -39,6 +41,7 @@ class _EditPageState extends State<EditPage> {
   final _extraController = TextEditingController();
   final _tagsController = TextEditingController();
   final _totpInputController = TextEditingController();
+  final List<String> _tags = [];
   Timer? _strengthDebounce;
   bool _obscure = true;
   bool _totpObscure = true;
@@ -145,7 +148,7 @@ class _EditPageState extends State<EditPage> {
       _usernameController.text = account.username;
       _passwordController.text = account.password;
       _extraController.text = account.extra;
-      _tagsController.text = account.tags.join('，');
+      _tags.addAll(_mergeTags(account.tags));
       final totp = account.totp;
       if (totp != null) {
         _totpEnabled = true;
@@ -182,15 +185,12 @@ class _EditPageState extends State<EditPage> {
     final username = _usernameController.text.trim();
     final password = _passwordController.text;
     final extra = _extraController.text.trim();
-    final tags = _tagsController.text
-        .split(RegExp(r'[,，]'))
-        .map((t) => t.trim())
-        .where((t) => t.isNotEmpty)
-        .toList();
     if (title.isEmpty) {
       _showError('请输入名称');
       return;
     }
+    if (!_addPendingTags()) return;
+    final tags = List<String>.of(_tags);
     TotpConfig? totp;
     if (_totpEnabled) {
       try {
@@ -214,24 +214,29 @@ class _EditPageState extends State<EditPage> {
       return;
     }
     setState(() => _saving = true);
-    final account =
-        widget.account ??
-        Account(title: '', username: '', password: '', extra: '');
-    final previousTotp = account.totp;
-    account
-      ..title = title
-      ..username = username
-      ..password = password
-      ..extra = extra
-      ..tags = tags
-      ..totp = totp;
+    final original = widget.account;
+    final account = Account(
+      id: original?.id,
+      title: title,
+      username: username,
+      password: password,
+      extra: extra,
+      tags: tags,
+      totp: totp,
+      createdAt: original?.createdAt,
+      updatedAt: original?.updatedAt,
+      deletedAt: original?.deletedAt,
+      secretsDecrypted: original?.secretsDecrypted ?? false,
+    );
     try {
       if (widget.accountSaver case final saver?) {
         await saver(account, _isEdit);
       } else if (_isEdit) {
-        await DatabaseHelper.instance.updateAccount(account);
+        final updated = await DatabaseHelper.instance.updateAccount(account);
+        if (updated <= 0) throw StateError('Account was not updated');
       } else {
-        await DatabaseHelper.instance.insertAccount(account);
+        final id = await DatabaseHelper.instance.insertAccount(account);
+        if (id <= 0) throw StateError('Account was not inserted');
       }
     } catch (_) {
       if (!mounted) return;
@@ -240,14 +245,57 @@ class _EditPageState extends State<EditPage> {
       return;
     }
     if (!mounted) return;
-    if (previousTotp != null && !identical(previousTotp, totp)) {
-      previousTotp.wipe();
+    if (original != null) {
+      final previousTotp = original.totp;
+      original
+        ..title = account.title
+        ..username = account.username
+        ..password = account.password
+        ..extra = account.extra
+        ..tags = List<String>.of(account.tags)
+        ..totp = account.totp?.copy()
+        ..updatedAt = account.updatedAt
+        ..deletedAt = account.deletedAt
+        ..secretsDecrypted = account.secretsDecrypted;
+      if (previousTotp != null && !identical(previousTotp, original.totp)) {
+        previousTotp.wipe();
+      }
     }
     Navigator.of(context).pop(true);
   }
 
   void _dismissKeyboard(PointerDownEvent _) {
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  bool _addPendingTags() {
+    final pendingTags = _mergeTags([_tagsController.text]);
+    final reservedTags = pendingTags.where(_reservedTagNames.contains).toList();
+    final merged = _mergeTags([
+      ..._tags,
+      ...pendingTags.where((tag) => !_reservedTagNames.contains(tag)),
+    ]);
+    setState(() {
+      _tags
+        ..clear()
+        ..addAll(merged);
+      _tagsController.clear();
+    });
+    if (reservedTags.isNotEmpty) {
+      _showError('“${reservedTags.join('、')}”是系统分类，不能作为标签');
+      return false;
+    }
+    return true;
+  }
+
+  void _removeTag(String tag) {
+    setState(() => _tags.remove(tag));
+  }
+
+  void _handleTagInputChanged(String value) {
+    if (value.endsWith(',') || value.endsWith('，')) {
+      _addPendingTags();
+    }
   }
 
   void _showError(String message) {
@@ -492,15 +540,42 @@ class _EditPageState extends State<EditPage> {
               maxLines: 3,
             ),
             const SizedBox(height: 16),
+            if (_tags.isNotEmpty) ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final tag in _tags)
+                    InputChip(
+                      key: ValueKey('account-tag-$tag'),
+                      label: Text(
+                        tag,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      deleteButtonTooltipMessage: '删除标签 $tag',
+                      onDeleted: _saving ? null : () => _removeTag(tag),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
             TextField(
               controller: _tagsController,
               textInputAction: TextInputAction.done,
               onTapOutside: _dismissKeyboard,
-              onSubmitted: (_) => _save(),
-              decoration: const InputDecoration(
-                labelText: '标签（可选）',
-                hintText: '多个标签用逗号分隔，例如：网盘，学校',
-                border: OutlineInputBorder(),
+              onChanged: _handleTagInputChanged,
+              onSubmitted: (_) => _addPendingTags(),
+              enabled: !_saving,
+              decoration: InputDecoration(
+                labelText: '添加标签',
+                hintText: '输入标签，支持逗号分隔',
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  tooltip: '添加标签',
+                  onPressed: _saving ? null : _addPendingTags,
+                  icon: const Icon(Icons.add),
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -519,4 +594,17 @@ class _EditPageState extends State<EditPage> {
       ),
     );
   }
+}
+
+List<String> _mergeTags(Iterable<String> values) {
+  final result = <String>[];
+  final keys = <String>{};
+  for (final value in values) {
+    for (final part in value.split(RegExp(r'[,，]'))) {
+      final tag = part.trim();
+      if (tag.isEmpty || !keys.add(tag.toLowerCase())) continue;
+      result.add(tag);
+    }
+  }
+  return result;
 }

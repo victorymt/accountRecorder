@@ -222,8 +222,9 @@ class _UnlockPageState extends State<UnlockPage> {
   }
 
   void _enter() {
-    Navigator.of(context).pushReplacement(
+    Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => HomePage(onLock: widget.onLock)),
+      (_) => false,
     );
   }
 

@@ -127,6 +127,7 @@ class DatabaseHelper {
   static const String _vaultKdfSaltKey = 'vault_kdf_salt';
   static const String _vaultKdfIterationsKey = 'vault_kdf_iterations';
   static const String _vaultFormatVersionKey = 'vault_format_version';
+  static const String _vaultKeyVerifierKey = 'vault_key_verifier';
 
   static const String _failedUnlockCountKey = 'failed_unlock_count';
   static const String _lastFailedUnlockKey = 'last_failed_unlock_at';
@@ -195,8 +196,14 @@ class DatabaseHelper {
         wrappingKey,
         associatedData: _vaultKeyAssociatedData,
       );
+      final vaultKeyVerifier = _createVaultKeyVerifier(vaultKey);
       await db.transaction((txn) async {
-        await _writeVaultMetadata(txn, salt, wrappedKey);
+        await _writeVaultMetadata(
+          txn,
+          salt,
+          wrappedKey,
+          vaultKeyVerifier: vaultKeyVerifier,
+        );
         await txn.execute('DROP TABLE IF EXISTS $_legacyTable');
       });
       _setVaultKey(vaultKey);
@@ -224,14 +231,31 @@ class DatabaseHelper {
     _invalidateCache();
     _setVaultKey(vaultKey);
     try {
-      final rows = await db.query(_vaultTable, limit: 1);
-      if (rows.isNotEmpty) {
+      final verifier = await _readMeta(db, _vaultKeyVerifierKey);
+      if (verifier != null) {
+        if (!_checkVaultKeyVerifier(verifier, _vaultKey!)) {
+          throw const FormatException('Invalid Vault Key');
+        }
+      } else {
+        final rows = await db.query(_vaultTable, limit: 1);
+        if (rows.isEmpty) {
+          throw const FormatException('Vault Key cannot be verified');
+        }
         final accounts = await compute(_decryptVaultRowsIsolate, (
           rows,
           _vaultKey!,
         ));
         for (final account in accounts) {
           _wipeAccount(account);
+        }
+        try {
+          await _putMeta(
+            db,
+            _vaultKeyVerifierKey,
+            _createVaultKeyVerifier(_vaultKey!),
+          );
+        } catch (_) {
+          // Successful row decryption already proves this key for old Vaults.
         }
       }
       return true;
@@ -351,6 +375,18 @@ class DatabaseHelper {
       );
       if (vaultKey.length != 32) return null;
       _setVaultKey(vaultKey);
+      final verifier = await _readMeta(db, _vaultKeyVerifierKey);
+      if (verifier == null || !_checkVaultKeyVerifier(verifier, vaultKey)) {
+        try {
+          await _putMeta(
+            db,
+            _vaultKeyVerifierKey,
+            _createVaultKeyVerifier(vaultKey),
+          );
+        } catch (_) {
+          // Verifier migration is best-effort; wrapped-key authentication passed.
+        }
+      }
       return Uint8List.fromList(vaultKey);
     } catch (_) {
       return null;
@@ -412,6 +448,7 @@ class DatabaseHelper {
         wrappingKey,
         associatedData: _vaultKeyAssociatedData,
       );
+      final vaultKeyVerifier = _createVaultKeyVerifier(vaultKey);
       final encryptedRows = [
         for (final account in accounts)
           _vaultRowForAccount(account, account.id!, vaultKey),
@@ -421,7 +458,12 @@ class DatabaseHelper {
         for (final row in encryptedRows) {
           await txn.insert(_vaultTable, row);
         }
-        await _writeVaultMetadata(txn, newSalt, wrappedKey);
+        await _writeVaultMetadata(
+          txn,
+          newSalt,
+          wrappedKey,
+          vaultKeyVerifier: vaultKeyVerifier,
+        );
         await txn.delete(
           'meta',
           where: 'key IN (?, ?, ?)',
@@ -951,6 +993,10 @@ class DatabaseHelper {
 final List<int> _vaultKeyAssociatedData = utf8.encode(
   'account_book:vault_key:v1',
 );
+final List<int> _vaultKeyVerifierAssociatedData = utf8.encode(
+  'account_book:vault_key_verifier:v1',
+);
+const String _vaultKeyVerifierMarker = 'account_book_valid_vault_key_v1';
 
 Future<void> _createVaultTable(DatabaseExecutor db) {
   return db.execute('''
@@ -983,8 +1029,9 @@ Future<void> _putMeta(DatabaseExecutor db, String key, String value) async {
 Future<void> _writeVaultMetadata(
   DatabaseExecutor db,
   String salt,
-  String wrappedKey,
-) async {
+  String wrappedKey, {
+  String? vaultKeyVerifier,
+}) async {
   await _putMeta(db, DatabaseHelper._wrappedVaultKey, wrappedKey);
   await _putMeta(db, DatabaseHelper._vaultKdfSaltKey, salt);
   await _putMeta(
@@ -993,6 +1040,30 @@ Future<void> _writeVaultMetadata(
     '${CryptoHelper.vaultKdfIterations}',
   );
   await _putMeta(db, DatabaseHelper._vaultFormatVersionKey, '1');
+  if (vaultKeyVerifier != null) {
+    await _putMeta(db, DatabaseHelper._vaultKeyVerifierKey, vaultKeyVerifier);
+  }
+}
+
+String _createVaultKeyVerifier(Uint8List key) {
+  return CryptoHelper.encrypt(
+    _vaultKeyVerifierMarker,
+    key,
+    associatedData: _vaultKeyVerifierAssociatedData,
+  );
+}
+
+bool _checkVaultKeyVerifier(String verifier, Uint8List key) {
+  try {
+    return CryptoHelper.decrypt(
+          verifier,
+          key,
+          associatedData: _vaultKeyVerifierAssociatedData,
+        ) ==
+        _vaultKeyVerifierMarker;
+  } catch (_) {
+    return false;
+  }
 }
 
 Future<int> _insertVaultAccount(

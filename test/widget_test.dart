@@ -118,7 +118,7 @@ void main() {
       find.byWidgetPredicate(
         (widget) =>
             widget is Text &&
-            RegExp(r'^\d{3} \d{3} · \d{1,2} 秒$').hasMatch(widget.data ?? ''),
+            RegExp(r'^\d{3} \d{3}$').hasMatch(widget.data ?? ''),
       ),
       findsOneWidget,
     );
@@ -177,6 +177,130 @@ void main() {
     await tester.pumpAndSettle();
     expect(locked, isTrue);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('当前标签分类消失后首页回到全部账号', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final taggedAccounts = [
+      Account(
+        id: 31,
+        title: '分类回退测试',
+        username: 'category-user',
+        password: 'category-password',
+        extra: '',
+        tags: const ['旧分类'],
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          accountLoader: (_, {tag}) async => taggedAccounts,
+          deletedAccountLoader: () async => const [],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('全部账号'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('旧分类'));
+    await tester.pumpAndSettle();
+    expect(find.text('旧分类'), findsOneWidget);
+
+    taggedAccounts.single.tags = const [];
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('安全检查'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('安全检查'), findsOneWidget);
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+
+    expect(find.text('全部账号'), findsOneWidget);
+    expect(find.text('旧分类'), findsNothing);
+    expect(find.text('分类回退测试'), findsOneWidget);
+  });
+
+  testWidgets('用户标签内部 ID 不与系统分类冲突', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final collisionAccounts = [
+      Account(
+        id: 41,
+        title: '内部动态标签账号',
+        username: 'internal-dynamic',
+        password: 'secret',
+        extra: '',
+        tags: const ['__dynamic_passwords__'],
+      ),
+      Account(
+        id: 42,
+        title: '内部收藏标签账号',
+        username: 'internal-favorite',
+        password: 'secret',
+        extra: '',
+        tags: const ['__favorites__'],
+      ),
+      Account(
+        id: 43,
+        title: '真实动态密码账号',
+        username: 'totp-user',
+        password: '',
+        extra: '',
+        totp: TotpConfig(
+          secret: 'JBSWY3DPEHPK3PXP',
+          issuer: 'TOTP',
+          accountName: 'totp-user',
+        ),
+      ),
+      Account(
+        id: 44,
+        title: '真实收藏账号',
+        username: 'favorite-user',
+        password: 'secret',
+        extra: '',
+        tags: const ['我的收藏'],
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          accountLoader: (_, {tag}) async => collisionAccounts,
+          deletedAccountLoader: () async => const [],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<void> selectCategory(String currentLabel, String nextLabel) async {
+      await tester.tap(find.text(currentLabel).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ListTile, nextLabel));
+      await tester.pumpAndSettle();
+    }
+
+    await selectCategory('全部账号', '__dynamic_passwords__');
+    expect(find.text('内部动态标签账号'), findsOneWidget);
+    expect(find.text('真实动态密码账号'), findsNothing);
+
+    await selectCategory('__dynamic_passwords__', '__favorites__');
+    expect(find.text('内部收藏标签账号'), findsOneWidget);
+    expect(find.text('真实收藏账号'), findsNothing);
+
+    await selectCategory('__favorites__', '动态密码');
+    expect(find.text('真实动态密码账号'), findsOneWidget);
+    expect(find.text('内部动态标签账号'), findsNothing);
+
+    await selectCategory('动态密码', '我的收藏');
+    expect(find.text('真实收藏账号'), findsOneWidget);
+    expect(find.text('内部收藏标签账号'), findsNothing);
   });
 
   testWidgets('详情页复制提示使用当前剪贴板清除时间', (tester) async {
@@ -268,6 +392,133 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(saved?.password, '  pass word  ');
+  });
+
+  testWidgets('编辑页可添加、删除并去重标签', (tester) async {
+    Account? saved;
+    final original = Account(
+      id: 8,
+      title: '标签测试',
+      username: 'tag-user',
+      password: 'tag-password',
+      extra: '',
+      tags: const ['旧标签', '保留标签'],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditPage(
+          account: original,
+          accountSaver: (account, _) async => saved = account,
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('account-tag-旧标签')), findsOneWidget);
+    await tester.tap(find.byTooltip('删除标签 旧标签'));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('account-tag-旧标签')), findsNothing);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, '添加标签'),
+      '新标签，保留标签, 第二标签',
+    );
+    await tester.ensureVisible(find.widgetWithText(TextField, '添加标签'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('添加标签'));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('account-tag-新标签')), findsOneWidget);
+    expect(find.byKey(const ValueKey('account-tag-第二标签')), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextField, '添加标签'), '待保存标签');
+    await tester.tap(find.byTooltip('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved?.tags, ['保留标签', '新标签', '第二标签', '待保存标签']);
+    expect(original.tags, saved?.tags);
+  });
+
+  testWidgets('编辑页阻止系统分类名称并允许收藏和内部 ID 标签', (tester) async {
+    Account? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditPage(accountSaver: (account, _) async => saved = account),
+      ),
+    );
+
+    await tester.enterText(find.widgetWithText(TextField, '名称'), '分类名称测试');
+    await tester.enterText(find.widgetWithText(TextField, '密码'), 'secret');
+    await tester.enterText(
+      find.widgetWithText(TextField, '添加标签'),
+      '全部账号,动态密码,我的收藏,__dynamic_passwords__,__favorites__',
+    );
+    await tester.ensureVisible(find.widgetWithText(TextField, '添加标签'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('添加标签'));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('account-tag-全部账号')), findsNothing);
+    expect(find.byKey(const ValueKey('account-tag-动态密码')), findsNothing);
+    expect(find.byKey(const ValueKey('account-tag-我的收藏')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('account-tag-__dynamic_passwords__')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('account-tag-__favorites__')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('是系统分类，不能作为标签'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('保存'));
+    await tester.pumpAndSettle();
+    expect(saved?.tags, ['我的收藏', '__dynamic_passwords__', '__favorites__']);
+  });
+
+  testWidgets('编辑保存失败时不修改原账号', (tester) async {
+    final original = Account(
+      id: 7,
+      title: '原名称',
+      username: 'original-user',
+      password: 'original-password',
+      extra: '原备注',
+      tags: const ['原标签'],
+      totp: TotpConfig(
+        secret: 'JBSWY3DPEHPK3PXP',
+        issuer: '原签发方',
+        accountName: 'original-user',
+      ),
+      createdAt: 1700000000000,
+      updatedAt: 1700000001000,
+      secretsDecrypted: true,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditPage(
+          account: original,
+          accountSaver: (_, _) async => throw StateError('write failed'),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.widgetWithText(TextField, '名称'), '新名称');
+    await tester.enterText(find.widgetWithText(TextField, '账号'), 'new-user');
+    await tester.enterText(
+      find.widgetWithText(TextField, '密码'),
+      'new-password',
+    );
+    await tester.tap(find.byTooltip('保存'));
+    await tester.pump();
+
+    expect(find.text('保存失败，请重试'), findsOneWidget);
+    expect(original.title, '原名称');
+    expect(original.username, 'original-user');
+    expect(original.password, 'original-password');
+    expect(original.extra, '原备注');
+    expect(original.tags, ['原标签']);
+    expect(original.totp?.secret, 'JBSWY3DPEHPK3PXP');
+    expect(original.totp?.issuer, '原签发方');
+    expect(original.updatedAt, 1700000001000);
+    expect(original.secretsDecrypted, isTrue);
   });
 
   testWidgets('编辑页使用生成密码并显示强度', (tester) async {

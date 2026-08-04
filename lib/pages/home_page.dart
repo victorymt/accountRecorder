@@ -56,16 +56,19 @@ enum _HomeAction {
 
 enum _AccountAction { copyPassword, copyTotp, edit, delete }
 
+enum _SystemCategory { dynamicPasswords, allAccounts, favorites }
+
 class _HomePageState extends State<HomePage> {
   static const _brandGreen = Color(0xFF00965E);
-  static const _allAccounts = '';
-  static const _dynamicPasswords = '__dynamic_passwords__';
-  static const _favorites = '__favorites__';
+  static const _allAccounts = _SystemCategory.allAccounts;
+  static const _dynamicPasswords = _SystemCategory.dynamicPasswords;
+  static const _favorites = _SystemCategory.favorites;
   static const _permanentCategories = [
     (_dynamicPasswords, '动态密码'),
     (_allAccounts, '全部账号'),
     (_favorites, '我的收藏'),
   ];
+  static const _systemCategoryTagNames = {'动态密码', '全部账号', '我的收藏'};
   static const _alphabet = <String>[
     '☆',
     'A',
@@ -103,7 +106,7 @@ class _HomePageState extends State<HomePage> {
   Timer? _searchDebounce;
   Timer? _totpTimer;
   String _query = '';
-  String _selectedCategory = _allAccounts;
+  Object _selectedCategory = _allAccounts;
   List<String> _allTags = const [];
   List<Account> _allAccountsData = const [];
   List<Account> _accounts = const [];
@@ -126,9 +129,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _totpTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _totpClock.value = DateTime.now();
-    });
     _reload();
   }
 
@@ -166,36 +166,45 @@ class _HomePageState extends State<HomePage> {
     final tags =
         allAccounts
             .expand((account) => account.tags)
-            .where((tag) => tag != '动态密码' && tag != '我的收藏')
+            .where((tag) => !_systemCategoryTagNames.contains(tag))
             .toSet()
             .toList()
           ..sort();
+    final selectedCategory =
+        _permanentCategories.any(
+              (category) => category.$1 == _selectedCategory,
+            ) ||
+            tags.contains(_selectedCategory)
+        ? _selectedCategory
+        : _allAccounts;
     setState(() {
       _allAccountsData = allAccounts;
+      _selectedCategory = selectedCategory;
       _accounts = _filterAccounts(
         allAccounts,
         query: _query,
-        category: _selectedCategory,
+        category: selectedCategory,
       );
       _allTags = tags;
       _trashCount = deletedAccounts.length;
       _loading = false;
       _loadError = null;
     });
+    _refreshTotpSchedule();
   }
 
-  String _tagForCategory(String category) {
+  String? _tagForCategory(Object category) {
     return switch (category) {
-      _dynamicPasswords => '',
       _favorites => '我的收藏',
-      _ => category,
+      String tag => tag,
+      _ => null,
     };
   }
 
   List<Account> _filterAccounts(
     List<Account> source, {
     required String query,
-    required String category,
+    required Object category,
   }) {
     final normalizedQuery = query.toLowerCase();
     final tag = _tagForCategory(category);
@@ -206,7 +215,7 @@ class _HomePageState extends State<HomePage> {
                   account.title.toLowerCase().contains(normalizedQuery) ||
                   account.username.toLowerCase().contains(normalizedQuery)) &&
               (category != _dynamicPasswords || account.totp != null) &&
-              (tag.isEmpty || account.tags.contains(tag)),
+              (tag == null || account.tags.contains(tag)),
         )
         .toList();
     result.sort(_compareAccounts);
@@ -232,7 +241,7 @@ class _HomePageState extends State<HomePage> {
     return code >= 65 && code <= 90 ? code - 65 : 26;
   }
 
-  void _selectCategory(String category) {
+  void _selectCategory(Object category) {
     if (_selectedCategory == category) return;
     setState(() {
       _selectedCategory = category;
@@ -242,6 +251,7 @@ class _HomePageState extends State<HomePage> {
         category: category,
       );
     });
+    _refreshTotpSchedule();
   }
 
   void _startSearch() {
@@ -260,6 +270,7 @@ class _HomePageState extends State<HomePage> {
         category: _selectedCategory,
       );
     });
+    _refreshTotpSchedule();
   }
 
   void _updateSearch(String value) {
@@ -275,6 +286,27 @@ class _HomePageState extends State<HomePage> {
           category: _selectedCategory,
         );
       });
+      _refreshTotpSchedule();
+    });
+  }
+
+  void _refreshTotpSchedule() {
+    _totpTimer?.cancel();
+    _totpTimer = null;
+    if (_selectedCategory != _dynamicPasswords) return;
+
+    final configs = _accounts
+        .map((account) => account.totp)
+        .whereType<TotpConfig>()
+        .toList();
+    if (configs.isEmpty) return;
+
+    final now = DateTime.now();
+    _totpClock.value = now;
+    final delay = timeUntilNextTotpChange(configs, now);
+    _totpTimer = Timer(delay + const Duration(milliseconds: 20), () {
+      if (!mounted) return;
+      _refreshTotpSchedule();
     });
   }
 
@@ -604,8 +636,16 @@ class _HomePageState extends State<HomePage> {
       AppLock.pickerActive = false;
     }
     if (picked == null || picked.files.isEmpty) return;
-    final path = picked.files.single.path;
-    if (path == null) return;
+    final file = picked.files.single;
+    if (file.size > AccountBoxImporter.maxFileBytes) {
+      _showMessage('导入文件过大');
+      return;
+    }
+    final path = file.path;
+    if (path == null) {
+      _showMessage('无法读取所选文件');
+      return;
+    }
 
     try {
       final content = await File(path).readAsString();
@@ -642,6 +682,8 @@ class _HomePageState extends State<HomePage> {
         if (result.skipped > 0) '跳过 ${result.skipped} 条',
       ];
       _showMessage(counts.join('，'));
+    } on FormatException {
+      _showMessage('导入文件格式无效或内容过多');
     } catch (_) {
       _showMessage('导入失败，请检查文件后重试');
     }
@@ -831,7 +873,7 @@ class _HomePageState extends State<HomePage> {
       ..._permanentCategories,
       for (final tag in _allTags) (tag, tag),
     ];
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showModalBottomSheet<Object>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
@@ -878,7 +920,7 @@ class _HomePageState extends State<HomePage> {
     for (final category in _permanentCategories) {
       if (category.$1 == _selectedCategory) return category.$2;
     }
-    return _selectedCategory;
+    return _selectedCategory is String ? _selectedCategory as String : '全部账号';
   }
 
   void _scrollToLetter(String letter) {
@@ -1146,7 +1188,6 @@ class _HomePageState extends State<HomePage> {
             builder: (context, now, _) {
               final totp = account.totp!;
               final code = formatTotpCode(totp.codeAt(now));
-              final remaining = totp.remainingSeconds(now);
               return ListTile(
                 contentPadding: const EdgeInsets.only(left: 18, right: 4),
                 title: Text(
@@ -1162,7 +1203,7 @@ class _HomePageState extends State<HomePage> {
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 5),
                   child: Text(
-                    '$code · $remaining 秒',
+                    code,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1238,9 +1279,9 @@ class _CategorySidebar extends StatelessWidget {
     required this.onSettings,
   });
 
-  final String selectedCategory;
+  final Object selectedCategory;
   final List<String> tags;
-  final ValueChanged<String> onSelected;
+  final ValueChanged<Object> onSelected;
   final VoidCallback onSettings;
 
   @override

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.account_book"
+    namespace = "cv.account.account_book"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -15,8 +15,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.account_book"
+        applicationId = "cv.account.account_book"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

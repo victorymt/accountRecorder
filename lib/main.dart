@@ -11,16 +11,52 @@ import 'settings/app_settings.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppSettings.instance.load();
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Color(0xFF00965E),
-      statusBarIconBrightness: Brightness.light,
-      statusBarBrightness: Brightness.dark,
-      systemNavigationBarColor: Color(0xFFFAFAFA),
-      systemNavigationBarIconBrightness: Brightness.dark,
-    ),
-  );
   runApp(const AccountBookApp());
+}
+
+TextScaler composeTextScaler(TextScaler systemScaler, double userScaleFactor) {
+  if (userScaleFactor == 1) return systemScaler;
+  return _MultipliedTextScaler(systemScaler, userScaleFactor);
+}
+
+SystemUiOverlayStyle systemOverlayStyleFor(ThemeData theme) {
+  final isDark = theme.brightness == Brightness.dark;
+  return SystemUiOverlayStyle(
+    statusBarColor: const Color(0xFF00965E),
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarColor: theme.scaffoldBackgroundColor,
+    systemNavigationBarDividerColor: theme.dividerColor,
+    systemNavigationBarIconBrightness: isDark
+        ? Brightness.light
+        : Brightness.dark,
+  );
+}
+
+final class _MultipliedTextScaler extends TextScaler {
+  const _MultipliedTextScaler(this.systemScaler, this.userScaleFactor)
+    : assert(userScaleFactor > 0);
+
+  final TextScaler systemScaler;
+  final double userScaleFactor;
+
+  @override
+  double scale(double fontSize) {
+    return systemScaler.scale(fontSize) * userScaleFactor;
+  }
+
+  @override
+  double get textScaleFactor => scale(14) / 14;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _MultipliedTextScaler &&
+        other.systemScaler == systemScaler &&
+        other.userScaleFactor == userScaleFactor;
+  }
+
+  @override
+  int get hashCode => Object.hash(systemScaler, userScaleFactor);
 }
 
 class AccountBookApp extends StatefulWidget {
@@ -101,8 +137,9 @@ class _AccountBookAppState extends State<AccountBookApp>
     try {
       await DatabaseHelper.instance.close();
       if (!mounted) return;
-      _navigatorKey.currentState?.pushReplacement(
-        MaterialPageRoute(builder: (_) => const UnlockPage()),
+      _navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => UnlockPage(onLock: _lock)),
+        (_) => false,
       );
     } finally {
       _locking = false;
@@ -126,12 +163,21 @@ class _AccountBookAppState extends State<AccountBookApp>
             AppThemeMode.light => ThemeMode.light,
             AppThemeMode.dark => ThemeMode.dark,
           },
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(settings.textScaleFactor)),
-            child: child ?? const SizedBox.shrink(),
-          ),
+          builder: (context, child) {
+            final mediaQuery = MediaQuery.of(context);
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: systemOverlayStyleFor(Theme.of(context)),
+              child: MediaQuery(
+                data: mediaQuery.copyWith(
+                  textScaler: composeTextScaler(
+                    mediaQuery.textScaler,
+                    settings.textScaleFactor,
+                  ),
+                ),
+                child: child ?? const SizedBox.shrink(),
+              ),
+            );
+          },
           home: UnlockPage(onLock: _lock),
         );
       },

@@ -148,7 +148,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除账号'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.tap(find.widgetWithText(FilledButton, '移至回收站'));
     await tester.pumpAndSettle();
     expect(find.text('微信工作号'), findsNothing);
     expect(find.text('导入账号A'), findsOneWidget);

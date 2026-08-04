@@ -119,6 +119,27 @@ void main() {
     await reopened.close();
   }, timeout: const Timeout(Duration(minutes: 3)));
 
+  test('空 Vault 拒绝错误 Vault Key', () async {
+    final path =
+        '/tmp/account_book_empty_vault_key_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
+    addTearDown(() => databaseFactory.deleteDatabase(path));
+
+    final creator = DatabaseHelper.forTesting(path);
+    final correctKey = await creator.setupMasterPassword('EmptyVaultPass123');
+    await creator.close();
+
+    final wrongKey = Uint8List(32);
+    final rejected = DatabaseHelper.forTesting(path);
+    expect(await rejected.unlockWithVaultKey(wrongKey), isFalse);
+    await rejected.close();
+
+    final accepted = DatabaseHelper.forTesting(path);
+    expect(await accepted.unlockWithVaultKey(correctKey), isTrue);
+    await accepted.close();
+    correctKey.fillRange(0, correctKey.length, 0);
+    wrongKey.fillRange(0, wrongKey.length, 0);
+  });
+
   test(
     '新建 Vault 可用 Vault Key 快速解锁且错误 Key 会失败',
     () async {
@@ -138,6 +159,14 @@ void main() {
       );
       await creator.close();
 
+      final legacyMetadata = await databaseFactory.openDatabase(path);
+      await legacyMetadata.delete(
+        'meta',
+        where: 'key = ?',
+        whereArgs: ['vault_key_verifier'],
+      );
+      await legacyMetadata.close();
+
       final quickUnlock = DatabaseHelper.forTesting(path);
       expect(await quickUnlock.unlockWithVaultKey(vaultKey), isTrue);
       final accounts = await quickUnlock.listAccounts('快速解锁');
@@ -155,6 +184,44 @@ void main() {
     },
     timeout: const Timeout(Duration(minutes: 3)),
   );
+
+  test('主密码解锁会修复损坏的 Vault Key 校验器', () async {
+    final path =
+        '/tmp/account_book_verifier_repair_${pid}_${DateTime.now().microsecondsSinceEpoch}.db';
+    addTearDown(() => databaseFactory.deleteDatabase(path));
+    const password = 'VerifierRepairPass123';
+
+    final creator = DatabaseHelper.forTesting(path);
+    final initialKey = await creator.setupMasterPassword(password);
+    initialKey.fillRange(0, initialKey.length, 0);
+    await creator.close();
+
+    final damagedMetadata = await databaseFactory.openDatabase(path);
+    await damagedMetadata.update(
+      'meta',
+      {'value': 'damaged-verifier'},
+      where: 'key = ?',
+      whereArgs: ['vault_key_verifier'],
+    );
+    await damagedMetadata.close();
+
+    final passwordUnlock = DatabaseHelper.forTesting(path);
+    final repairedKey = await passwordUnlock.unlock(password);
+    expect(repairedKey, hasLength(32));
+    await passwordUnlock.close();
+
+    final repairedMetadata = await databaseFactory.openDatabase(path);
+    expect(
+      await _metaValue(repairedMetadata, 'vault_key_verifier'),
+      isNot('damaged-verifier'),
+    );
+    await repairedMetadata.close();
+
+    final quickUnlock = DatabaseHelper.forTesting(path);
+    expect(await quickUnlock.unlockWithVaultKey(repairedKey!), isTrue);
+    await quickUnlock.close();
+    repairedKey.fillRange(0, repairedKey.length, 0);
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   test(
     '修改主密码只重新包装 Vault Key 且错误密码不改动元数据',

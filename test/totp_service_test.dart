@@ -83,4 +83,24 @@ void main() {
     expect(formatTotpCode('123456'), '123 456');
     expect(formatTotpCode('12345678'), '1234 5678');
   });
+
+  test('主页刷新等待到最近的 TOTP 周期边界', () {
+    final thirtySeconds = TotpConfig(secret: 'JBSWY3DPEHPK3PXP', period: 30);
+    final sixtySeconds = TotpConfig(secret: 'JBSWY3DPEHPK3PXP', period: 60);
+
+    expect(
+      timeUntilNextTotpChange([
+        thirtySeconds,
+        sixtySeconds,
+      ], DateTime.fromMillisecondsSinceEpoch(29000)),
+      const Duration(seconds: 1),
+    );
+    expect(
+      timeUntilNextTotpChange([
+        thirtySeconds,
+      ], DateTime.fromMillisecondsSinceEpoch(30000)),
+      const Duration(seconds: 30),
+    );
+    expect(timeUntilNextTotpChange(const [], DateTime.now()), Duration.zero);
+  });
 }

@@ -250,3 +250,16 @@ String formatTotpCode(String code) {
   final split = code.length ~/ 2;
   return '${code.substring(0, split)} ${code.substring(split)}';
 }
+
+Duration timeUntilNextTotpChange(Iterable<TotpConfig> configs, DateTime time) {
+  int? shortestDelayMs;
+  for (final config in configs) {
+    final periodMs = config.period * Duration.millisecondsPerSecond;
+    final elapsedMs = time.millisecondsSinceEpoch % periodMs;
+    final delayMs = periodMs - elapsedMs;
+    if (shortestDelayMs == null || delayMs < shortestDelayMs) {
+      shortestDelayMs = delayMs;
+    }
+  }
+  return Duration(milliseconds: shortestDelayMs ?? 0);
+}
