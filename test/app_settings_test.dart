@@ -43,6 +43,26 @@ void main() {
     expect(reloaded.themeMode, AppThemeMode.dark);
   });
 
+  test('WebDAV 设置保存在配置文件并可重新加载', () async {
+    final settings = AppSettings.forTesting(settingsFile);
+    await settings.setWebDavConfig(
+      url: ' https://dav.example.test/files ',
+      username: ' alice ',
+      password: 'transport-secret',
+      path: 'backups/account-book.abvault',
+    );
+
+    final persisted =
+        jsonDecode(await settingsFile.readAsString()) as Map<String, dynamic>;
+    expect(persisted['version'], 3);
+    final reloaded = AppSettings.forTesting(settingsFile);
+    await reloaded.load();
+    expect(reloaded.webDavUrl, 'https://dav.example.test/files');
+    expect(reloaded.webDavUsername, 'alice');
+    expect(reloaded.webDavPassword, 'transport-secret');
+    expect(reloaded.webDavPath, 'backups/account-book.abvault');
+  });
+
   test('无效或损坏的持久化时间回退到安全默认值', () async {
     await settingsFile.writeAsString(
       jsonEncode({

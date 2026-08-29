@@ -39,6 +39,10 @@ class AppSettings extends ChangeNotifier {
   static const double defaultTextScaleFactor = 1.0;
   static const AppThemeMode defaultThemeMode = AppThemeMode.system;
   static const String? defaultFontFamily = null;
+  static const String defaultWebDavUrl = '';
+  static const String defaultWebDavUsername = '';
+  static const String defaultWebDavPassword = '';
+  static const String defaultWebDavPath = 'account-book-backup.abvault';
 
   static String durationLabel(Duration duration) {
     if (duration == Duration.zero) return '立即';
@@ -75,6 +79,10 @@ class AppSettings extends ChangeNotifier {
   double textScaleFactor = defaultTextScaleFactor;
   String? fontFamily = defaultFontFamily;
   AppThemeMode themeMode = defaultThemeMode;
+  String webDavUrl = defaultWebDavUrl;
+  String webDavUsername = defaultWebDavUsername;
+  String webDavPassword = defaultWebDavPassword;
+  String webDavPath = defaultWebDavPath;
 
   Future<void> load() async {
     backgroundLockDelay = defaultBackgroundLockDelay;
@@ -82,13 +90,19 @@ class AppSettings extends ChangeNotifier {
     textScaleFactor = defaultTextScaleFactor;
     fontFamily = defaultFontFamily;
     themeMode = defaultThemeMode;
+    webDavUrl = defaultWebDavUrl;
+    webDavUsername = defaultWebDavUsername;
+    webDavPassword = defaultWebDavPassword;
+    webDavPath = defaultWebDavPath;
     try {
       final file = await _settingsFile();
       if (!await file.exists()) return;
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map<String, dynamic>) return;
       final version = decoded['version'];
-      if (version is! int || (version != 1 && version != 2)) return;
+      if (version is! int || (version != 1 && version != 2 && version != 3)) {
+        return;
+      }
       final backgroundMs = decoded['backgroundLockMs'];
       final clipboardMs = decoded['clipboardClearMs'];
       if (backgroundMs is int) {
@@ -122,12 +136,32 @@ class AppSettings extends ChangeNotifier {
           );
         }
       }
+      if (version >= 3) {
+        final url = decoded['webDavUrl'];
+        final username = decoded['webDavUsername'];
+        final password = decoded['webDavPassword'];
+        final path = decoded['webDavPath'];
+        if (url is String && url.length <= 2048) webDavUrl = url;
+        if (username is String && username.length <= 512) {
+          webDavUsername = username;
+        }
+        if (password is String && password.length <= 2048) {
+          webDavPassword = password;
+        }
+        if (path is String && path.length <= 2048 && path.trim().isNotEmpty) {
+          webDavPath = path;
+        }
+      }
     } catch (_) {
       backgroundLockDelay = defaultBackgroundLockDelay;
       clipboardClearDelay = defaultClipboardClearDelay;
       textScaleFactor = defaultTextScaleFactor;
       fontFamily = defaultFontFamily;
       themeMode = defaultThemeMode;
+      webDavUrl = defaultWebDavUrl;
+      webDavUsername = defaultWebDavUsername;
+      webDavPassword = defaultWebDavPassword;
+      webDavPath = defaultWebDavPath;
     }
   }
 
@@ -203,18 +237,71 @@ class AppSettings extends ChangeNotifier {
     }
   }
 
+  Future<void> setWebDavConfig({
+    required String url,
+    required String username,
+    required String password,
+    required String path,
+  }) async {
+    final normalizedUrl = url.trim();
+    final normalizedUsername = username.trim();
+    final normalizedPath = path.trim();
+    if (normalizedUrl.isNotEmpty) {
+      final parsedUrl = Uri.tryParse(normalizedUrl);
+      if (parsedUrl == null ||
+          (parsedUrl.scheme != 'http' && parsedUrl.scheme != 'https') ||
+          parsedUrl.host.isEmpty ||
+          parsedUrl.userInfo.isNotEmpty ||
+          parsedUrl.hasQuery ||
+          parsedUrl.hasFragment) {
+        throw ArgumentError('Invalid WebDAV URL');
+      }
+    }
+    final pathSegments = normalizedPath
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((segment) => segment.isNotEmpty);
+    if (normalizedUrl.length > 2048 ||
+        normalizedUsername.length > 512 ||
+        password.length > 2048 ||
+        normalizedPath.isEmpty ||
+        normalizedPath.length > 2048 ||
+        pathSegments.any((segment) => segment == '.' || segment == '..')) {
+      throw ArgumentError('Invalid WebDAV settings');
+    }
+    final previous = (webDavUrl, webDavUsername, webDavPassword, webDavPath);
+    webDavUrl = normalizedUrl;
+    webDavUsername = normalizedUsername;
+    webDavPassword = password;
+    webDavPath = normalizedPath;
+    try {
+      await _write();
+      notifyListeners();
+    } catch (_) {
+      webDavUrl = previous.$1;
+      webDavUsername = previous.$2;
+      webDavPassword = previous.$3;
+      webDavPath = previous.$4;
+      rethrow;
+    }
+  }
+
   Future<void> _write() async {
     final file = await _settingsFile();
     await file.parent.create(recursive: true);
     final temporary = File('${file.path}.tmp');
     await temporary.writeAsString(
       jsonEncode({
-        'version': 2,
+        'version': 3,
         'backgroundLockMs': backgroundLockDelay.inMilliseconds,
         'clipboardClearMs': clipboardClearDelay.inMilliseconds,
         'textScaleFactor': textScaleFactor,
         'fontFamily': fontFamily,
         'themeMode': themeMode.name,
+        'webDavUrl': webDavUrl,
+        'webDavUsername': webDavUsername,
+        'webDavPassword': webDavPassword,
+        'webDavPath': webDavPath,
       }),
       flush: true,
     );
