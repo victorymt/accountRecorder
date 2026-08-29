@@ -101,6 +101,17 @@ git push origin v1.0.1
 
 也可以在 **Actions → Android Release → Run workflow** 中输入一个已经存在的版本 tag 手动发布。APK 会以 `account-book-1.0.1.apk` 的形式出现在对应 Release 的附件中。
 
+### 发布 Beta
+
+正式 keystore 配置完成前，可以使用 Beta workflow 发布不需要 Secrets 的测试版本。Beta 使用 debug 签名，仅适合测试，不应作为正式分发版本：
+
+```bash
+git tag v1.0.1-beta.1
+git push origin v1.0.1-beta.1
+```
+
+推送后会自动创建 GitHub Pre-release，APK 名称为 `account-book-1.0.1-beta.1-debug.apk`。Beta 版本不能覆盖正式签名版本；正式发布仍需配置 keystore。
+
 ## 测试与检查
 
 ```bash

@@ -1,0 +1,94 @@
+name: Android Beta
+
+on:
+  push:
+    tags:
+      - "v*.*.*-beta.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing beta tag, for example v1.0.1-beta.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  beta:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out beta tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.8"
+          channel: stable
+          cache: true
+
+      - name: Resolve beta version
+        id: version
+        env:
+          BETA_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$BETA_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            echo "Beta tag must match vMAJOR.MINOR.PATCH-beta.NUMBER, got: $BETA_TAG" >&2
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/$BETA_TAG"; then
+            echo "Beta tag does not exist in the checkout: $BETA_TAG" >&2
+            exit 1
+          fi
+
+          version_name="${BETA_TAG#v}"
+          {
+            echo "tag=$BETA_TAG"
+            echo "name=$version_name"
+            echo "code=$GITHUB_RUN_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build beta APK
+        run: >-
+          flutter build apk --debug
+          --build-name=${{ steps.version.outputs.name }}
+          --build-number=${{ steps.version.outputs.code }}
+
+      - name: Publish GitHub Beta Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_TAG: ${{ steps.version.outputs.tag }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          APK_PATH: build/app/outputs/flutter-apk/app-debug.apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          beta_asset="account-book-${VERSION_NAME}-debug.apk"
+          cp "$APK_PATH" "$beta_asset"
+          gh release create "$BETA_TAG" "$beta_asset" \
+            --title "$BETA_TAG" \
+            --generate-notes \
+            --prerelease
