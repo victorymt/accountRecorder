@@ -32,6 +32,7 @@ class _TrashPageState extends State<TrashPage> {
   bool _loading = true;
   bool _clearing = false;
   bool _loadFailed = false;
+  bool _changed = false;
 
   TrashAccountLoader get _loadAccounts =>
       widget.accountLoader ?? DatabaseHelper.instance.listDeletedAccounts;
@@ -76,7 +77,10 @@ class _TrashPageState extends State<TrashPage> {
       final count = await restore(id);
       if (!mounted) return;
       if (count > 0) {
-        setState(() => _accounts.removeWhere((item) => item.id == id));
+        setState(() {
+          _accounts.removeWhere((item) => item.id == id);
+          _changed = true;
+        });
         _showMessage('账号已恢复');
       } else {
         _showMessage('恢复失败，请重试');
@@ -117,7 +121,10 @@ class _TrashPageState extends State<TrashPage> {
       final count = await delete(id);
       if (!mounted) return;
       if (count > 0) {
-        setState(() => _accounts.removeWhere((item) => item.id == id));
+        setState(() {
+          _accounts.removeWhere((item) => item.id == id);
+          _changed = true;
+        });
         _showMessage('账号已永久删除');
       } else {
         _showMessage('删除失败，请重试');
@@ -155,7 +162,10 @@ class _TrashPageState extends State<TrashPage> {
       final count = await clear();
       if (!mounted) return;
       if (count > 0) {
-        setState(() => _accounts = const []);
+        setState(() {
+          _accounts = const [];
+          _changed = true;
+        });
         _showMessage('回收站已清空');
       } else {
         _showMessage('清空失败，请重试');
@@ -188,20 +198,26 @@ class _TrashPageState extends State<TrashPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('回收站'),
-        actions: [
-          if (_accounts.isNotEmpty)
-            IconButton(
-              tooltip: '清空回收站',
-              onPressed: _clearing ? null : _clearTrash,
-              icon: const Icon(Icons.delete_sweep_outlined),
-            ),
-          const SizedBox(width: 6),
-        ],
+    return PopScope<bool>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && mounted) Navigator.of(context).pop(_changed);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('回收站'),
+          actions: [
+            if (_accounts.isNotEmpty)
+              IconButton(
+                tooltip: '清空回收站',
+                onPressed: _clearing ? null : _clearTrash,
+                icon: const Icon(Icons.delete_sweep_outlined),
+              ),
+            const SizedBox(width: 6),
+          ],
+        ),
+        body: _buildBody(),
       ),
-      body: _buildBody(),
     );
   }
 

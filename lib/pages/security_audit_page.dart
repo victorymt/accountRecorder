@@ -30,6 +30,7 @@ class SecurityAuditPage extends StatefulWidget {
 
 class _SecurityAuditPageState extends State<SecurityAuditPage> {
   late Future<PasswordAuditResult> _audit;
+  bool _changed = false;
 
   @override
   void initState() {
@@ -69,34 +70,43 @@ class _SecurityAuditPageState extends State<SecurityAuditPage> {
         : await Navigator.of(context).push<bool>(
             MaterialPageRoute(builder: (_) => EditPage(account: account)),
           );
-    if (changed == true && mounted) _reanalyze();
+    if (changed == true && mounted) {
+      _changed = true;
+      _reanalyze();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('安全检查'),
-        actions: [
-          IconButton(
-            tooltip: '重新检查',
-            onPressed: _reanalyze,
-            icon: const Icon(Icons.refresh),
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
-      body: FutureBuilder<PasswordAuditResult>(
-        future: _audit,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError || !snapshot.hasData) {
-            return _AuditError(onRetry: _reanalyze);
-          }
-          return _buildResult(context, snapshot.data!);
-        },
+    return PopScope<bool>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && mounted) Navigator.of(context).pop(_changed);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('安全检查'),
+          actions: [
+            IconButton(
+              tooltip: '重新检查',
+              onPressed: _reanalyze,
+              icon: const Icon(Icons.refresh),
+            ),
+            const SizedBox(width: 6),
+          ],
+        ),
+        body: FutureBuilder<PasswordAuditResult>(
+          future: _audit,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError || !snapshot.hasData) {
+              return _AuditError(onRetry: _reanalyze);
+            }
+            return _buildResult(context, snapshot.data!);
+          },
+        ),
       ),
     );
   }

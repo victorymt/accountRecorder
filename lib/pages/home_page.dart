@@ -115,6 +115,8 @@ class _HomePageState extends State<HomePage> {
   final _searchController = TextEditingController();
   final _accountScrollController = ScrollController();
   final _totpClock = ValueNotifier<DateTime>(DateTime.now());
+  final Expando<_AccountSearchMetadata> _searchMetadata =
+      Expando<_AccountSearchMetadata>();
   Timer? _searchDebounce;
   Timer? _totpTimer;
   String _query = '';
@@ -127,6 +129,7 @@ class _HomePageState extends State<HomePage> {
   String? _loadError;
   int _reloadSeq = 0;
   int _trashCount = 0;
+  int _loadedAccountsFingerprint = 0;
 
   BackupService get _backupService =>
       widget.backupService ?? _defaultBackupService;
@@ -179,8 +182,14 @@ class _HomePageState extends State<HomePage> {
     }
     if (!mounted || seq != _reloadSeq) return;
 
+    for (final account in allAccounts) {
+      _searchMetadata[account] = _AccountSearchMetadata(account);
+    }
+    final sortedAccounts = List<Account>.of(allAccounts)
+      ..sort(_compareAccounts);
+    final loadedFingerprint = _accountsFingerprint(sortedAccounts);
     final tags =
-        allAccounts
+        sortedAccounts
             .expand((account) => account.tags)
             .where((tag) => !_systemCategoryTagNames.contains(tag))
             .toSet()
@@ -194,15 +203,16 @@ class _HomePageState extends State<HomePage> {
         ? _selectedCategory
         : _allAccounts;
     setState(() {
-      _allAccountsData = allAccounts;
+      _allAccountsData = sortedAccounts;
       _selectedCategory = selectedCategory;
       _accounts = _filterAccounts(
-        allAccounts,
+        sortedAccounts,
         query: _query,
         category: selectedCategory,
       );
       _allTags = tags;
       _trashCount = deletedAccounts.length;
+      _loadedAccountsFingerprint = loadedFingerprint;
       _loading = false;
       _loadError = null;
     });
@@ -224,37 +234,28 @@ class _HomePageState extends State<HomePage> {
   }) {
     final normalizedQuery = query.toLowerCase();
     final tag = _tagForCategory(category);
-    final result = source
-        .where(
-          (account) =>
-              (normalizedQuery.isEmpty ||
-                  account.title.toLowerCase().contains(normalizedQuery) ||
-                  account.username.toLowerCase().contains(normalizedQuery)) &&
-              (category != _dynamicPasswords || account.totp != null) &&
-              (tag == null || account.tags.contains(tag)),
-        )
-        .toList();
-    result.sort(_compareAccounts);
+    final result = source.where((account) {
+      final metadata = _searchMetadata[account];
+      final title = metadata?.title ?? account.title.toLowerCase();
+      final username = metadata?.username ?? account.username.toLowerCase();
+      return (normalizedQuery.isEmpty ||
+              title.contains(normalizedQuery) ||
+              username.contains(normalizedQuery)) &&
+          (category != _dynamicPasswords || account.totp != null) &&
+          (tag == null || account.tags.contains(tag));
+    }).toList();
     return result;
   }
 
   int _compareAccounts(Account left, Account right) {
-    final groupComparison = _alphabetGroup(
-      left.title,
-    ).compareTo(_alphabetGroup(right.title));
+    final leftMetadata = _searchMetadata[left] ?? _AccountSearchMetadata(left);
+    final rightMetadata =
+        _searchMetadata[right] ?? _AccountSearchMetadata(right);
+    final groupComparison = leftMetadata.group.compareTo(rightMetadata.group);
     if (groupComparison != 0) return groupComparison;
-    final titleComparison = left.title.toLowerCase().compareTo(
-      right.title.toLowerCase(),
-    );
+    final titleComparison = leftMetadata.title.compareTo(rightMetadata.title);
     if (titleComparison != 0) return titleComparison;
-    return left.username.toLowerCase().compareTo(right.username.toLowerCase());
-  }
-
-  int _alphabetGroup(String title) {
-    final normalized = title.trimLeft().toUpperCase();
-    if (normalized.isEmpty) return 26;
-    final code = normalized.codeUnitAt(0);
-    return code >= 65 && code <= 90 ? code - 65 : 26;
+    return leftMetadata.username.compareTo(rightMetadata.username);
   }
 
   void _selectCategory(Object category) {
@@ -936,19 +937,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openSecurityAudit() async {
-    await Navigator.of(context).push<void>(
+    final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => SecurityAuditPage(accounts: _allAccountsData),
       ),
     );
-    if (mounted) await _reload();
+    final after = _accountsFingerprint(_allAccountsData);
+    if ((changed == true || after != _loadedAccountsFingerprint) && mounted) {
+      await _reload();
+    }
   }
 
   Future<void> _openTrash() async {
-    await Navigator.of(
+    final changed = await Navigator.of(
       context,
-    ).push<void>(MaterialPageRoute(builder: (_) => const TrashPage()));
-    if (mounted) await _reload();
+    ).push<bool>(MaterialPageRoute(builder: (_) => const TrashPage()));
+    if (changed == true && mounted) await _reload();
   }
 
   Future<void> _showTools() async {
@@ -1453,6 +1457,50 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
+}
+
+int _accountsFingerprint(Iterable<Account> accounts) {
+  var hash = 0;
+  for (final account in accounts) {
+    final totp = account.totp;
+    hash = Object.hash(
+      hash,
+      account.id,
+      account.title,
+      account.username,
+      account.password,
+      account.extra,
+      Object.hashAll(account.tags),
+      account.createdAt,
+      account.updatedAt,
+      account.deletedAt,
+      totp?.secret,
+      totp?.issuer,
+      totp?.accountName,
+      totp?.algorithm,
+      totp?.digits,
+      totp?.period,
+    );
+  }
+  return hash;
+}
+
+class _AccountSearchMetadata {
+  _AccountSearchMetadata(Account account)
+    : title = account.title.toLowerCase(),
+      username = account.username.toLowerCase(),
+      group = _alphabetGroupForTitle(account.title);
+
+  final String title;
+  final String username;
+  final int group;
+}
+
+int _alphabetGroupForTitle(String title) {
+  final normalized = title.trimLeft().toUpperCase();
+  if (normalized.isEmpty) return 26;
+  final code = normalized.codeUnitAt(0);
+  return code >= 65 && code <= 90 ? code - 65 : 26;
 }
 
 class _CategorySidebar extends StatelessWidget {
