@@ -114,6 +114,15 @@ class AccountBoxImporter {
   }
 }
 
-List<ImportAccount> parseAccountBoxInIsolate(String content) {
-  return AccountBoxImporter.parse(content);
+List<Map<String, Object?>> parseAccountBoxMapsInIsolate(String content) {
+  return [
+    for (final account in AccountBoxImporter.parse(content))
+      <String, Object?>{
+        'title': account.title,
+        'username': account.username,
+        'password': account.password,
+        'extra': account.extra,
+        'tags': List<String>.of(account.tags),
+      },
+  ];
 }

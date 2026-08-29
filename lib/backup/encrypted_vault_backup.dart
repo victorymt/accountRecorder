@@ -74,10 +74,7 @@ class EncryptedVaultBackup {
     }
 
     final createdAt = DateTime.now().millisecondsSinceEpoch;
-    final items = await compute(_encodeAccountsInIsolate, (
-      accounts,
-      createdAt,
-    ));
+    final items = _encodeAccounts(accounts, createdAt);
     final salt = CryptoHelper.randomSalt();
     Uint8List? key;
     try {
@@ -286,11 +283,6 @@ class EncryptedVaultBackup {
     if (native != null) return native;
     return compute(_deriveBackupKeyInIsolate, (password, salt, iterations));
   }
-}
-
-List<Map<String, Object?>> _encodeAccountsInIsolate((List<Account>, int) args) {
-  final (accounts, fallbackTimestamp) = args;
-  return EncryptedVaultBackup._encodeAccounts(accounts, fallbackTimestamp);
 }
 
 Map<String, Object?> _decodeEnvelopeDataInIsolate(String source) {

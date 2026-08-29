@@ -771,11 +771,11 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    List<ImportAccount> parsed;
+    List<Map<String, Object?>> parsed;
     try {
       parsed = await _runWithProgress('正在解析导入文件…', () async {
         final content = await File(path).readAsString();
-        return compute(parseAccountBoxInIsolate, content);
+        return compute(parseAccountBoxMapsInIsolate, content);
       });
       if (parsed.isEmpty) {
         _showMessage('文件中没有解析到账号');
@@ -784,11 +784,11 @@ class _HomePageState extends State<HomePage> {
       final accounts = parsed
           .map(
             (item) => Account(
-              title: item.title,
-              username: item.username,
-              password: item.password,
-              extra: item.extra,
-              tags: item.tags,
+              title: item['title'] as String,
+              username: item['username'] as String,
+              password: item['password'] as String,
+              extra: item['extra'] as String,
+              tags: (item['tags'] as List).cast<String>(),
             ),
           )
           .toList();
