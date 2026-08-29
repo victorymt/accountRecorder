@@ -41,13 +41,65 @@ flutter pub get
 flutter run
 ```
 
-构建 Android Release APK：
+构建 Android Release APK（需要先配置正式签名，见下方“自动发布”）：
 
 ```bash
 flutter build apk --release
 ```
 
 APK 输出路径为 `build/app/outputs/flutter-apk/app-release.apk`。
+
+## 自动发布 Android Release
+
+项目使用 GitHub Actions 自动构建并发布 APK。发布流程会固定使用 Flutter 3.44.8、Java 17，先执行 `flutter analyze` 和 `flutter test`，再构建正式签名的 APK。
+
+### 首次配置签名
+
+在安全位置生成 keystore（只需生成一次）：
+
+```bash
+keytool -genkeypair -v \
+  -keystore release-key.jks \
+  -alias account-book \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+将 `release-key.jks` 转成单行 base64，并在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中创建以下 Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `release-key.jks` 的 base64 内容 |
+| `ANDROID_KEY_ALIAS` | keystore 的 alias |
+| `ANDROID_KEY_PASSWORD` | alias 对应的 key 密码 |
+| `ANDROID_STORE_PASSWORD` | keystore 密码 |
+
+Linux/macOS 可使用以下命令生成 base64 内容：
+
+```bash
+base64 < release-key.jks | tr -d '\n'
+```
+
+不要把 keystore、`android/key.properties` 或密码提交到仓库。需要在本地构建 release 时，可在 `android/key.properties` 写入：
+
+```properties
+storeFile=release-key.jks
+storePassword=...
+keyAlias=account-book
+keyPassword=...
+```
+
+并将 keystore 放在 `android/release-key.jks`。缺少这些配置时，release 构建会直接失败，不会回退到 debug 签名。
+
+### 创建 Release
+
+版本号来自 `vMAJOR.MINOR.PATCH` 格式的 tag。推送 tag 后会自动创建 GitHub Release 并上传 APK：
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+也可以在 **Actions → Android Release → Run workflow** 中输入一个已经存在的版本 tag 手动发布。APK 会以 `account-book-1.0.1.apk` 的形式出现在对应 Release 的附件中。
 
 ## 测试与检查
 
