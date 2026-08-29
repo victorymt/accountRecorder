@@ -74,7 +74,10 @@ class EncryptedVaultBackup {
     }
 
     final createdAt = DateTime.now().millisecondsSinceEpoch;
-    final items = _encodeAccounts(accounts, createdAt);
+    final items = await compute(_encodeAccountsInIsolate, (
+      accounts,
+      createdAt,
+    ));
     final salt = CryptoHelper.randomSalt();
     Uint8List? key;
     try {
@@ -100,11 +103,15 @@ class EncryptedVaultBackup {
   }
 
   static Future<VaultBackupData> open(String source, String password) async {
-    if (utf8.encode(source).length > maxFileBytes) {
-      throw const BackupFormatException('Backup file is too large');
+    final envelopeData = await compute(_decodeEnvelopeDataInIsolate, source);
+    if (envelopeData['ok'] != true) {
+      throw BackupFormatException(envelopeData['message'] as String);
     }
-
-    final envelope = _decodeEnvelope(source);
+    final envelope = _BackupEnvelope(
+      iterations: envelopeData['iterations'] as int,
+      salt: envelopeData['salt'] as String,
+      payload: envelopeData['payload'] as String,
+    );
     Uint8List? key;
     try {
       key = await _deriveBackupKey(
@@ -278,6 +285,27 @@ class EncryptedVaultBackup {
     );
     if (native != null) return native;
     return compute(_deriveBackupKeyInIsolate, (password, salt, iterations));
+  }
+}
+
+List<Map<String, Object?>> _encodeAccountsInIsolate((List<Account>, int) args) {
+  final (accounts, fallbackTimestamp) = args;
+  return EncryptedVaultBackup._encodeAccounts(accounts, fallbackTimestamp);
+}
+
+Map<String, Object?> _decodeEnvelopeDataInIsolate(String source) {
+  try {
+    final envelope = EncryptedVaultBackup._decodeEnvelope(source);
+    return {
+      'ok': true,
+      'iterations': envelope.iterations,
+      'salt': envelope.salt,
+      'payload': envelope.payload,
+    };
+  } on BackupFormatException catch (error) {
+    return {'ok': false, 'message': error.message};
+  } catch (_) {
+    return {'ok': false, 'message': 'Invalid backup envelope'};
   }
 }
 

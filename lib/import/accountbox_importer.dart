@@ -113,3 +113,7 @@ class AccountBoxImporter {
     return result;
   }
 }
+
+List<ImportAccount> parseAccountBoxInIsolate(String content) {
+  return AccountBoxImporter.parse(content);
+}

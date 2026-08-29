@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
@@ -770,9 +770,12 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    List<ImportAccount> parsed;
     try {
-      final content = await File(path).readAsString();
-      final parsed = AccountBoxImporter.parse(content);
+      parsed = await _runWithProgress('正在解析导入文件…', () async {
+        final content = await File(path).readAsString();
+        return compute(parseAccountBoxInIsolate, content);
+      });
       if (parsed.isEmpty) {
         _showMessage('文件中没有解析到账号');
         return;
@@ -794,9 +797,12 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       final conflictPolicy = await _chooseImportPolicy(preview);
       if (conflictPolicy == null) return;
-      final result = await DatabaseHelper.instance.importAccounts(
-        accounts,
-        conflictPolicy: conflictPolicy,
+      final result = await _runWithProgress(
+        '正在导入账号…',
+        () => DatabaseHelper.instance.importAccounts(
+          accounts,
+          conflictPolicy: conflictPolicy,
+        ),
       );
       _reload();
       final counts = [

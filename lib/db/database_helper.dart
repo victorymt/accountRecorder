@@ -719,6 +719,8 @@ class DatabaseHelper {
     var imported = 0;
     var skipped = 0;
     var updated = 0;
+    final pending =
+        <({Account source, int id, int createdAt, int updatedAt})>[];
     await db.transaction((txn) async {
       for (final source in accounts) {
         final identity = accountIdentityKey(source.title, source.username);
@@ -729,12 +731,13 @@ class DatabaseHelper {
               skipped++;
               continue;
             case ImportConflictPolicy.overwrite:
-              await txn.update(
-                _vaultTable,
-                _vaultUpdateForAccount(source, existing.id!, key),
-                where: 'id = ?',
-                whereArgs: [existing.id],
-              );
+              final now = DateTime.now().millisecondsSinceEpoch;
+              pending.add((
+                source: source,
+                id: existing.id!,
+                createdAt: existing.createdAt ?? now,
+                updatedAt: now,
+              ));
               existingByKey[identity] = _copyImportedAccount(
                 source,
                 id: existing.id,
@@ -745,7 +748,18 @@ class DatabaseHelper {
             case ImportConflictPolicy.keepBoth:
               final copyTitle = _uniqueCopyTitle(source.title, usedTitles);
               final copy = _copyImportedAccount(source, title: copyTitle);
-              final id = await _insertVaultAccount(txn, copy, key);
+              final now = DateTime.now().millisecondsSinceEpoch;
+              final id = await txn.insert(_vaultTable, {
+                'encrypted_payload': '',
+                'created_at': copy.createdAt ?? now,
+                'updated_at': now,
+              });
+              pending.add((
+                source: copy,
+                id: id,
+                createdAt: copy.createdAt ?? now,
+                updatedAt: now,
+              ));
               existingByKey[accountIdentityKey(copy.title, copy.username)] =
                   _copyImportedAccount(copy, id: id);
               imported++;
@@ -753,10 +767,55 @@ class DatabaseHelper {
           }
         }
         usedTitles.add(source.title.trim().toLowerCase());
-        final id = await _insertVaultAccount(txn, source, key);
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final id = await txn.insert(_vaultTable, {
+          'encrypted_payload': '',
+          'created_at': source.createdAt ?? now,
+          'updated_at': now,
+        });
+        pending.add((
+          source: source,
+          id: id,
+          createdAt: source.createdAt ?? now,
+          updatedAt: now,
+        ));
         existingByKey[identity] = _copyImportedAccount(source, id: id);
         imported++;
       }
+
+      if (pending.isEmpty) return;
+      final snapshots = [
+        for (final item in pending)
+          <String, Object?>{
+            'id': item.id,
+            'title': item.source.title,
+            'username': item.source.username,
+            'password': item.source.password,
+            'extra': item.source.extra,
+            'tags': List<String>.of(item.source.tags),
+            'totp': item.source.totp?.toJson(),
+            'createdAt': item.createdAt,
+            'updatedAt': item.updatedAt,
+            'deletedAt': item.source.deletedAt,
+          },
+      ];
+      final encryptedRows = await compute(_encryptRestoredRowsIsolate, (
+        snapshots,
+        key,
+      ));
+      final batch = txn.batch();
+      for (final row in encryptedRows) {
+        batch.update(
+          _vaultTable,
+          {
+            'encrypted_payload': row['encrypted_payload'],
+            'updated_at': row['updated_at'],
+          },
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+      }
+      await batch.commit(noResult: true);
     });
     _invalidateCache();
     return ImportResult(imported: imported, skipped: skipped, updated: updated);
