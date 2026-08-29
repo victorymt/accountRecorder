@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../security/password_security.dart';
@@ -24,6 +26,7 @@ class _PasswordGeneratorSheetState extends State<PasswordGeneratorSheet> {
   PasswordGeneratorOptions _options = const PasswordGeneratorOptions();
   late String _password;
   late PasswordStrength _strength;
+  Timer? _strengthDebounce;
 
   @override
   void initState() {
@@ -32,6 +35,7 @@ class _PasswordGeneratorSheetState extends State<PasswordGeneratorSheet> {
   }
 
   void _regenerate({bool notify = true}) {
+    _strengthDebounce?.cancel();
     final password = generatePassword(_options);
     final strength = evaluatePasswordStrength(password);
     if (notify) {
@@ -47,7 +51,22 @@ class _PasswordGeneratorSheetState extends State<PasswordGeneratorSheet> {
 
   void _updateOptions(PasswordGeneratorOptions options) {
     _options = options;
-    _regenerate();
+    final password = generatePassword(_options);
+    setState(() => _password = password);
+    _strengthDebounce?.cancel();
+    _strengthDebounce = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted || _password != password) return;
+      final strength = evaluatePasswordStrength(password);
+      if (_strength.score != strength.score) {
+        setState(() => _strength = strength);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _strengthDebounce?.cancel();
+    super.dispose();
   }
 
   bool _canDisable(bool enabled) {
