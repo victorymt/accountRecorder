@@ -868,13 +868,15 @@ class DatabaseHelper {
 
     await db.transaction((txn) async {
       await txn.delete(_vaultTable);
+      final batch = txn.batch();
       for (final row in encryptedRows) {
-        await txn.insert(
+        batch.insert(
           _vaultTable,
           row,
           conflictAlgorithm: ConflictAlgorithm.abort,
         );
       }
+      await batch.commit(noResult: true);
     });
     _invalidateCache();
     return encryptedRows.length;
@@ -974,9 +976,11 @@ class DatabaseHelper {
     if (deleted.isEmpty) return 0;
     final db = await database;
     await db.transaction((txn) async {
+      final batch = txn.batch();
       for (final account in deleted) {
-        await txn.delete(_vaultTable, where: 'id = ?', whereArgs: [account.id]);
+        batch.delete(_vaultTable, where: 'id = ?', whereArgs: [account.id]);
       }
+      await batch.commit(noResult: true);
     });
     for (final account in deleted) {
       accounts.remove(account);
@@ -1006,9 +1010,11 @@ class DatabaseHelper {
     if (expired.isEmpty) return 0;
     final db = await database;
     await db.transaction((txn) async {
+      final batch = txn.batch();
       for (final account in expired) {
-        await txn.delete(_vaultTable, where: 'id = ?', whereArgs: [account.id]);
+        batch.delete(_vaultTable, where: 'id = ?', whereArgs: [account.id]);
       }
+      await batch.commit(noResult: true);
     });
     for (final account in expired) {
       accounts.remove(account);

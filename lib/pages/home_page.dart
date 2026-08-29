@@ -960,70 +960,77 @@ class _HomePageState extends State<HomePage> {
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.file_download_outlined),
-              title: const Text('导出加密备份'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.exportBackup),
-            ),
-            ListTile(
-              leading: const Icon(Icons.restore_page_outlined),
-              title: const Text('恢复加密备份'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.restoreBackup),
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud_upload_outlined),
-              title: const Text('上传备份到 WebDAV'),
-              subtitle: Text(_webDavStatusLabel()),
-              onTap: () =>
-                  Navigator.of(context).pop(_HomeAction.uploadWebDavBackup),
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud_download_outlined),
-              title: const Text('从 WebDAV 恢复备份'),
-              subtitle: Text(_webDavStatusLabel()),
-              onTap: () =>
-                  Navigator.of(context).pop(_HomeAction.restoreWebDavBackup),
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud_outlined),
-              title: const Text('WebDAV 设置'),
-              onTap: () =>
-                  Navigator.of(context).pop(_HomeAction.webDavSettings),
-            ),
-            ListTile(
-              leading: const Icon(Icons.upload_file_outlined),
-              title: const Text('导入账号'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.import),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: Text('回收站 ($_trashCount)'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.trash),
-            ),
-            ListTile(
-              leading: const Icon(Icons.health_and_safety_outlined),
-              title: const Text('安全检查'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.audit),
-            ),
-            ListTile(
-              leading: const Icon(Icons.security_outlined),
-              title: const Text('安全设置'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.security),
-            ),
-            ListTile(
-              leading: const Icon(Icons.palette_outlined),
-              title: const Text('界面设置'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.appearance),
-            ),
-            ListTile(
-              leading: const Icon(Icons.lock_outline),
-              title: const Text('锁定账号本子'),
-              onTap: () => Navigator.of(context).pop(_HomeAction.lock),
-            ),
-          ],
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.file_download_outlined),
+                title: const Text('导出加密备份'),
+                onTap: () =>
+                    Navigator.of(context).pop(_HomeAction.exportBackup),
+              ),
+              ListTile(
+                leading: const Icon(Icons.restore_page_outlined),
+                title: const Text('恢复加密备份'),
+                onTap: () =>
+                    Navigator.of(context).pop(_HomeAction.restoreBackup),
+              ),
+              ListTile(
+                leading: const Icon(Icons.cloud_upload_outlined),
+                title: const Text('上传备份到 WebDAV'),
+                subtitle: Text(_webDavStatusLabel()),
+                onTap: () =>
+                    Navigator.of(context).pop(_HomeAction.uploadWebDavBackup),
+              ),
+              ListTile(
+                leading: const Icon(Icons.cloud_download_outlined),
+                title: const Text('从 WebDAV 恢复备份'),
+                subtitle: Text(_webDavStatusLabel()),
+                onTap: () =>
+                    Navigator.of(context).pop(_HomeAction.restoreWebDavBackup),
+              ),
+              ListTile(
+                leading: const Icon(Icons.cloud_outlined),
+                title: const Text('WebDAV 设置'),
+                onTap: () =>
+                    Navigator.of(context).pop(_HomeAction.webDavSettings),
+              ),
+              ListTile(
+                leading: const Icon(Icons.upload_file_outlined),
+                title: const Text('导入账号'),
+                onTap: () => Navigator.of(context).pop(_HomeAction.import),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: Text('回收站 ($_trashCount)'),
+                onTap: () => Navigator.of(context).pop(_HomeAction.trash),
+              ),
+              ListTile(
+                leading: const Icon(Icons.health_and_safety_outlined),
+                title: const Text('安全检查'),
+                onTap: () => Navigator.of(context).pop(_HomeAction.audit),
+              ),
+              ListTile(
+                leading: const Icon(Icons.security_outlined),
+                title: const Text('安全设置'),
+                onTap: () => Navigator.of(context).pop(_HomeAction.security),
+              ),
+              ListTile(
+                leading: const Icon(Icons.palette_outlined),
+                title: const Text('界面设置'),
+                onTap: () => Navigator.of(context).pop(_HomeAction.appearance),
+              ),
+              ListTile(
+                leading: const Icon(Icons.lock_outline),
+                title: const Text('锁定账号本子'),
+                onTap: () => Navigator.of(context).pop(_HomeAction.lock),
+              ),
+            ],
+          ),
         ),
       ),
     );
