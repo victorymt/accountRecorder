@@ -43,6 +43,8 @@ class AppSettings extends ChangeNotifier {
   static const String defaultWebDavUsername = '';
   static const String defaultWebDavPassword = '';
   static const String defaultWebDavPath = 'account-book-backup.abvault';
+  static const DateTime? defaultLastWebDavUploadAt = null;
+  static const DateTime? defaultLastWebDavDownloadAt = null;
 
   static String durationLabel(Duration duration) {
     if (duration == Duration.zero) return '立即';
@@ -83,6 +85,8 @@ class AppSettings extends ChangeNotifier {
   String webDavUsername = defaultWebDavUsername;
   String webDavPassword = defaultWebDavPassword;
   String webDavPath = defaultWebDavPath;
+  DateTime? lastWebDavUploadAt = defaultLastWebDavUploadAt;
+  DateTime? lastWebDavDownloadAt = defaultLastWebDavDownloadAt;
 
   Future<void> load() async {
     backgroundLockDelay = defaultBackgroundLockDelay;
@@ -94,13 +98,16 @@ class AppSettings extends ChangeNotifier {
     webDavUsername = defaultWebDavUsername;
     webDavPassword = defaultWebDavPassword;
     webDavPath = defaultWebDavPath;
+    lastWebDavUploadAt = defaultLastWebDavUploadAt;
+    lastWebDavDownloadAt = defaultLastWebDavDownloadAt;
     try {
       final file = await _settingsFile();
       if (!await file.exists()) return;
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map<String, dynamic>) return;
       final version = decoded['version'];
-      if (version is! int || (version != 1 && version != 2 && version != 3)) {
+      if (version is! int ||
+          (version != 1 && version != 2 && version != 3 && version != 4)) {
         return;
       }
       final backgroundMs = decoded['backgroundLockMs'];
@@ -152,6 +159,10 @@ class AppSettings extends ChangeNotifier {
           webDavPath = path;
         }
       }
+      if (version >= 4) {
+        lastWebDavUploadAt = _parseTimestamp(decoded['lastWebDavUploadAt']);
+        lastWebDavDownloadAt = _parseTimestamp(decoded['lastWebDavDownloadAt']);
+      }
     } catch (_) {
       backgroundLockDelay = defaultBackgroundLockDelay;
       clipboardClearDelay = defaultClipboardClearDelay;
@@ -162,6 +173,8 @@ class AppSettings extends ChangeNotifier {
       webDavUsername = defaultWebDavUsername;
       webDavPassword = defaultWebDavPassword;
       webDavPath = defaultWebDavPath;
+      lastWebDavUploadAt = defaultLastWebDavUploadAt;
+      lastWebDavDownloadAt = defaultLastWebDavDownloadAt;
     }
   }
 
@@ -270,10 +283,21 @@ class AppSettings extends ChangeNotifier {
       throw ArgumentError('Invalid WebDAV settings');
     }
     final previous = (webDavUrl, webDavUsername, webDavPassword, webDavPath);
+    final changed =
+        previous.$1 != normalizedUrl ||
+        previous.$2 != normalizedUsername ||
+        previous.$3 != password ||
+        previous.$4 != normalizedPath;
     webDavUrl = normalizedUrl;
     webDavUsername = normalizedUsername;
     webDavPassword = password;
     webDavPath = normalizedPath;
+    final previousUpload = lastWebDavUploadAt;
+    final previousDownload = lastWebDavDownloadAt;
+    if (changed) {
+      lastWebDavUploadAt = null;
+      lastWebDavDownloadAt = null;
+    }
     try {
       await _write();
       notifyListeners();
@@ -282,6 +306,32 @@ class AppSettings extends ChangeNotifier {
       webDavUsername = previous.$2;
       webDavPassword = previous.$3;
       webDavPath = previous.$4;
+      lastWebDavUploadAt = previousUpload;
+      lastWebDavDownloadAt = previousDownload;
+      rethrow;
+    }
+  }
+
+  Future<void> markWebDavUploadSuccess([DateTime? at]) async {
+    final previous = lastWebDavUploadAt;
+    lastWebDavUploadAt = (at ?? DateTime.now()).toUtc();
+    try {
+      await _write();
+      notifyListeners();
+    } catch (_) {
+      lastWebDavUploadAt = previous;
+      rethrow;
+    }
+  }
+
+  Future<void> markWebDavDownloadSuccess([DateTime? at]) async {
+    final previous = lastWebDavDownloadAt;
+    lastWebDavDownloadAt = (at ?? DateTime.now()).toUtc();
+    try {
+      await _write();
+      notifyListeners();
+    } catch (_) {
+      lastWebDavDownloadAt = previous;
       rethrow;
     }
   }
@@ -292,7 +342,7 @@ class AppSettings extends ChangeNotifier {
     final temporary = File('${file.path}.tmp');
     await temporary.writeAsString(
       jsonEncode({
-        'version': 3,
+        'version': 4,
         'backgroundLockMs': backgroundLockDelay.inMilliseconds,
         'clipboardClearMs': clipboardClearDelay.inMilliseconds,
         'textScaleFactor': textScaleFactor,
@@ -302,6 +352,8 @@ class AppSettings extends ChangeNotifier {
         'webDavUsername': webDavUsername,
         'webDavPassword': webDavPassword,
         'webDavPath': webDavPath,
+        'lastWebDavUploadAt': lastWebDavUploadAt?.toIso8601String(),
+        'lastWebDavDownloadAt': lastWebDavDownloadAt?.toIso8601String(),
       }),
       flush: true,
     );
@@ -318,5 +370,11 @@ class AppSettings extends ChangeNotifier {
     if (override != null) return override;
     final directory = await getApplicationSupportDirectory();
     return File('${directory.path}${Platform.pathSeparator}settings.json');
+  }
+
+  static DateTime? _parseTimestamp(Object? value) {
+    if (value is! String) return null;
+    final parsed = DateTime.tryParse(value);
+    return parsed?.toUtc();
   }
 }

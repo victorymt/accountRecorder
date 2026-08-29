@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 import '../app_lock.dart';
+import '../backup/backup_service.dart';
 import '../backup/encrypted_vault_backup.dart';
 import '../backup/webdav_backup.dart';
 import '../db/database_helper.dart';
@@ -29,17 +30,23 @@ typedef AccountLoader =
     Future<List<Account>> Function(String query, {String? tag});
 typedef DeletedAccountLoader = Future<List<Account>> Function();
 
+final _defaultBackupService = BackupService();
+
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
     this.onLock,
     this.accountLoader,
     this.deletedAccountLoader,
+    this.backupService,
+    this.settings,
   });
 
   final VoidCallback? onLock;
   final AccountLoader? accountLoader;
   final DeletedAccountLoader? deletedAccountLoader;
+  final BackupService? backupService;
+  final AppSettings? settings;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -120,6 +127,10 @@ class _HomePageState extends State<HomePage> {
   String? _loadError;
   int _reloadSeq = 0;
   int _trashCount = 0;
+
+  BackupService get _backupService =>
+      widget.backupService ?? _defaultBackupService;
+  AppSettings get _settings => widget.settings ?? AppSettings.instance;
 
   AccountLoader get _loadAccounts =>
       widget.accountLoader ?? DatabaseHelper.instance.listAccounts;
@@ -490,8 +501,7 @@ class _HomePageState extends State<HomePage> {
     late final String content;
     try {
       content = await _runWithProgress('正在加密备份…', () async {
-        final accounts = await DatabaseHelper.instance.listAccountsForBackup();
-        return EncryptedVaultBackup.create(accounts, password);
+        return _backupService.createEncryptedBackup(password);
       });
     } catch (_) {
       _showMessage('备份创建失败，请重试');
@@ -554,53 +564,42 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _uploadWebDavBackup() async {
+    if (!await _ensureWebDavConfigured()) return;
+    if (!mounted) return;
     final config = _webDavConfig;
-    if (!config.isConfigured) {
-      _showMessage('请先配置 WebDAV');
-      await _openWebDavSettings();
-      return;
-    }
     final password = await BackupPasswordDialog.show(
       context,
       mode: BackupPasswordMode.create,
     );
     if (password == null || !mounted) return;
 
-    Uint8List? bytes;
-    final client = WebDavClient(config);
     try {
-      bytes = await _runWithProgress('正在加密并上传备份…', () async {
-        final accounts = await DatabaseHelper.instance.listAccountsForBackup();
-        final content = await EncryptedVaultBackup.create(accounts, password);
-        return Uint8List.fromList(utf8.encode(content));
-      });
-      await _runWithProgress('正在上传备份…', () => client.upload(bytes!));
-      if (mounted) _showMessage('加密备份已上传到 WebDAV');
+      await _runWithProgress(
+        '正在加密并上传备份…',
+        () => _backupService.uploadWebDav(config, password),
+      );
+      final statusSaved = await _recordWebDavUploadSuccess();
+      if (mounted) setState(() {});
+      if (mounted) {
+        _showMessage(statusSaved ? '加密备份已上传到 WebDAV' : '备份已上传，但同步状态保存失败');
+      }
     } on WebDavException catch (error) {
       _showMessage(error.message);
     } catch (_) {
       _showMessage('WebDAV 备份上传失败，请重试');
-    } finally {
-      client.close();
-      final buffer = bytes;
-      if (buffer != null) buffer.fillRange(0, buffer.length, 0);
     }
   }
 
   Future<void> _restoreWebDavBackup() async {
+    if (!await _ensureWebDavConfigured()) return;
     final config = _webDavConfig;
-    if (!config.isConfigured) {
-      _showMessage('请先配置 WebDAV');
-      await _openWebDavSettings();
-      return;
-    }
-    final client = WebDavClient(config);
-    Uint8List? bytes;
     try {
-      bytes = await _runWithProgress('正在从 WebDAV 下载备份…', client.download);
-      final downloaded = bytes;
-      if (downloaded == null) return;
-      final content = utf8.decode(downloaded);
+      final content = await _runWithProgress(
+        '正在从 WebDAV 下载备份…',
+        () => _backupService.downloadWebDav(config),
+      );
+      await _recordWebDavDownloadSuccess();
+      if (mounted) setState(() {});
       await _restoreBackupContent(content);
     } on WebDavException catch (error) {
       _showMessage(error.message);
@@ -608,10 +607,6 @@ class _HomePageState extends State<HomePage> {
       _showMessage('WebDAV 备份文件不是有效文本');
     } catch (_) {
       _showMessage('WebDAV 备份下载失败，请重试');
-    } finally {
-      client.close();
-      final buffer = bytes;
-      if (buffer != null) buffer.fillRange(0, buffer.length, 0);
     }
   }
 
@@ -628,7 +623,7 @@ class _HomePageState extends State<HomePage> {
       try {
         backup = await _runWithProgress(
           '正在验证备份…',
-          () => EncryptedVaultBackup.open(content, password),
+          () => _backupService.openEncryptedBackup(content, password),
         );
       } on BackupFormatException {
         _showMessage('不是有效的账号本子备份');
@@ -673,9 +668,7 @@ class _HomePageState extends State<HomePage> {
       try {
         await _runWithProgress(
           '正在恢复账号…',
-          () => DatabaseHelper.instance.restoreAccountsAtomically(
-            backup!.accounts,
-          ),
+          () => _backupService.restore(backup!),
         );
       } catch (_) {
         _showMessage('恢复失败，当前账号未更改');
@@ -690,7 +683,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   WebDavConfig get _webDavConfig {
-    final settings = AppSettings.instance;
+    final settings = _settings;
     return WebDavConfig(
       endpoint: settings.webDavUrl,
       username: settings.webDavUsername,
@@ -699,10 +692,53 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _openWebDavSettings() async {
-    await Navigator.of(
-      context,
-    ).push<void>(MaterialPageRoute(builder: (_) => const WebDavSettingsPage()));
+  Future<bool> _openWebDavSettings() async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => WebDavSettingsPage(settings: _settings),
+      ),
+    );
+    if (mounted) setState(() {});
+    return saved == true;
+  }
+
+  Future<bool> _ensureWebDavConfigured() async {
+    if (_webDavConfig.isConfigured) return true;
+    _showMessage('请先配置 WebDAV');
+    final saved = await _openWebDavSettings();
+    return saved && _webDavConfig.isConfigured;
+  }
+
+  Future<bool> _recordWebDavUploadSuccess() async {
+    try {
+      await _settings.markWebDavUploadSuccess();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _recordWebDavDownloadSuccess() async {
+    try {
+      await _settings.markWebDavDownloadSuccess();
+    } catch (_) {
+      // A status write failure must not block decrypting a downloaded backup.
+    }
+  }
+
+  String _webDavStatusLabel() {
+    final settings = _settings;
+    final upload = _formatSyncTime(settings.lastWebDavUploadAt);
+    final download = _formatSyncTime(settings.lastWebDavDownloadAt);
+    if (upload == null && download == null) return '尚未同步';
+    return '上传 ${upload ?? '未同步'} · 下载 ${download ?? '未同步'}';
+  }
+
+  String? _formatSyncTime(DateTime? value) {
+    if (value == null) return null;
+    final local = value.toLocal();
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${local.month}/${local.day} ${twoDigits(local.hour)}:${twoDigits(local.minute)}';
   }
 
   String _backupFileName(DateTime dateTime) {
@@ -930,12 +966,14 @@ class _HomePageState extends State<HomePage> {
             ListTile(
               leading: const Icon(Icons.cloud_upload_outlined),
               title: const Text('上传备份到 WebDAV'),
+              subtitle: Text(_webDavStatusLabel()),
               onTap: () =>
                   Navigator.of(context).pop(_HomeAction.uploadWebDavBackup),
             ),
             ListTile(
               leading: const Icon(Icons.cloud_download_outlined),
               title: const Text('从 WebDAV 恢复备份'),
+              subtitle: Text(_webDavStatusLabel()),
               onTap: () =>
                   Navigator.of(context).pop(_HomeAction.restoreWebDavBackup),
             ),
@@ -1147,20 +1185,22 @@ class _HomePageState extends State<HomePage> {
                         title: Text('恢复加密备份'),
                       ),
                     ),
-                    const PopupMenuItem(
+                    PopupMenuItem(
                       value: _HomeAction.uploadWebDavBackup,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.cloud_upload_outlined),
                         title: Text('上传备份到 WebDAV'),
+                        subtitle: Text(_webDavStatusLabel()),
                       ),
                     ),
-                    const PopupMenuItem(
+                    PopupMenuItem(
                       value: _HomeAction.restoreWebDavBackup,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.cloud_download_outlined),
                         title: Text('从 WebDAV 恢复备份'),
+                        subtitle: Text(_webDavStatusLabel()),
                       ),
                     ),
                     const PopupMenuItem(

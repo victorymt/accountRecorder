@@ -149,6 +149,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('导出加密备份'), findsOneWidget);
     expect(find.text('恢复加密备份'), findsOneWidget);
+    expect(find.text('尚未同步'), findsNWidgets(2));
     expect(find.text('导入账号'), findsOneWidget);
     expect(find.text('安全检查'), findsOneWidget);
     expect(find.text('回收站 (1)'), findsOneWidget);

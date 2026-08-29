@@ -4,7 +4,9 @@ import '../backup/webdav_backup.dart';
 import '../settings/app_settings.dart';
 
 class WebDavSettingsPage extends StatefulWidget {
-  const WebDavSettingsPage({super.key});
+  const WebDavSettingsPage({super.key, this.settings});
+
+  final AppSettings? settings;
 
   @override
   State<WebDavSettingsPage> createState() => _WebDavSettingsPageState();
@@ -18,11 +20,15 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
   bool _saving = false;
   bool _testing = false;
   bool _obscurePassword = true;
+  String? _urlError;
+  String? _pathError;
+
+  AppSettings get _settings => widget.settings ?? AppSettings.instance;
 
   @override
   void initState() {
     super.initState();
-    final settings = AppSettings.instance;
+    final settings = _settings;
     _urlController = TextEditingController(text: settings.webDavUrl);
     _usernameController = TextEditingController(text: settings.webDavUsername);
     _passwordController = TextEditingController(text: settings.webDavPassword);
@@ -49,9 +55,10 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
 
   Future<bool> _save() async {
     if (_saving) return false;
+    if (!_validate()) return false;
     setState(() => _saving = true);
     try {
-      await AppSettings.instance.setWebDavConfig(
+      await _settings.setWebDavConfig(
         url: _urlController.text,
         username: _usernameController.text,
         password: _passwordController.text,
@@ -70,11 +77,12 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
   }
 
   Future<void> _saveAndClose() async {
-    if (await _save() && mounted) Navigator.of(context).pop();
+    if (await _save() && mounted) Navigator.of(context).pop(true);
   }
 
   Future<void> _testConnection() async {
     if (_testing || _saving) return;
+    if (!_validate(requireEndpoint: true)) return;
     setState(() => _testing = true);
     final client = WebDavClient(_config());
     try {
@@ -95,6 +103,34 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
     );
+  }
+
+  bool _validate({bool requireEndpoint = false}) {
+    final endpoint = _urlController.text.trim();
+    final path = _pathController.text.trim().replaceAll('\\', '/');
+    final parsed = Uri.tryParse(endpoint);
+    final invalidEndpoint =
+        (requireEndpoint && endpoint.isEmpty) ||
+        (endpoint.isNotEmpty &&
+            (parsed == null ||
+                (parsed.scheme != 'http' && parsed.scheme != 'https') ||
+                parsed.host.isEmpty ||
+                parsed.userInfo.isNotEmpty ||
+                parsed.hasQuery ||
+                parsed.hasFragment));
+    final segments = path.split('/').where((segment) => segment.isNotEmpty);
+    final invalidPath =
+        path.isEmpty ||
+        segments.any((segment) => segment == '.' || segment == '..');
+    setState(() {
+      _urlError = invalidEndpoint
+          ? endpoint.isEmpty
+                ? '请输入 WebDAV 地址'
+                : '请输入有效的 HTTP(S) 地址'
+          : null;
+      _pathError = invalidPath ? '请输入有效的远端文件路径' : null;
+    });
+    return !invalidEndpoint && !invalidPath;
   }
 
   @override
@@ -119,11 +155,15 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
             keyboardType: TextInputType.url,
             autocorrect: false,
             enableSuggestions: false,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'WebDAV 地址',
               hintText: 'https://dav.example.com/remote.php/dav/files/me',
-              prefixIcon: Icon(Icons.cloud_outlined),
+              prefixIcon: const Icon(Icons.cloud_outlined),
+              errorText: _urlError,
             ),
+            onChanged: (_) {
+              if (_urlError != null) setState(() => _urlError = null);
+            },
           ),
           const SizedBox(height: 16),
           TextField(
@@ -131,11 +171,15 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
             keyboardType: TextInputType.url,
             autocorrect: false,
             enableSuggestions: false,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '远端文件路径',
               hintText: 'account-book-backup.abvault',
-              prefixIcon: Icon(Icons.insert_drive_file_outlined),
+              prefixIcon: const Icon(Icons.insert_drive_file_outlined),
+              errorText: _pathError,
             ),
+            onChanged: (_) {
+              if (_pathError != null) setState(() => _pathError = null);
+            },
           ),
           const SizedBox(height: 16),
           TextField(
@@ -169,6 +213,14 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
             ),
           ),
           const SizedBox(height: 24),
+          Text(
+            '同步状态：${_syncStatusLabel()}',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: busy ? null : _testConnection,
             icon: _testing
@@ -189,5 +241,19 @@ class _WebDavSettingsPageState extends State<WebDavSettingsPage> {
         ],
       ),
     );
+  }
+
+  String _syncStatusLabel() {
+    final upload = _formatTime(_settings.lastWebDavUploadAt);
+    final download = _formatTime(_settings.lastWebDavDownloadAt);
+    if (upload == null && download == null) return '尚未同步';
+    return '上传 ${upload ?? '未同步'} · 下载 ${download ?? '未同步'}';
+  }
+
+  String? _formatTime(DateTime? value) {
+    if (value == null) return null;
+    final local = value.toLocal();
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${local.month}/${local.day} ${twoDigits(local.hour)}:${twoDigits(local.minute)}';
   }
 }

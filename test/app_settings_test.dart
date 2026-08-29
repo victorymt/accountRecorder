@@ -54,13 +54,45 @@ void main() {
 
     final persisted =
         jsonDecode(await settingsFile.readAsString()) as Map<String, dynamic>;
-    expect(persisted['version'], 3);
+    expect(persisted['version'], 4);
     final reloaded = AppSettings.forTesting(settingsFile);
     await reloaded.load();
     expect(reloaded.webDavUrl, 'https://dav.example.test/files');
     expect(reloaded.webDavUsername, 'alice');
     expect(reloaded.webDavPassword, 'transport-secret');
     expect(reloaded.webDavPath, 'backups/account-book.abvault');
+  });
+
+  test('WebDAV 同步成功时间保存在配置文件并可重新加载', () async {
+    final settings = AppSettings.forTesting(settingsFile);
+    final uploadedAt = DateTime.utc(2026, 8, 29, 9, 10);
+    final downloadedAt = DateTime.utc(2026, 8, 29, 9, 12);
+    await settings.markWebDavUploadSuccess(uploadedAt);
+    await settings.markWebDavDownloadSuccess(downloadedAt);
+
+    final reloaded = AppSettings.forTesting(settingsFile);
+    await reloaded.load();
+    expect(reloaded.lastWebDavUploadAt, uploadedAt);
+    expect(reloaded.lastWebDavDownloadAt, downloadedAt);
+  });
+
+  test('更换 WebDAV 配置后清除旧同步状态', () async {
+    final settings = AppSettings.forTesting(settingsFile);
+    await settings.setWebDavConfig(
+      url: 'https://dav.example.test',
+      username: 'alice',
+      password: 'secret',
+      path: 'backup.abvault',
+    );
+    await settings.markWebDavUploadSuccess(DateTime.utc(2026, 8, 29, 9, 10));
+    await settings.setWebDavConfig(
+      url: 'https://dav.other.test',
+      username: 'alice',
+      password: 'secret',
+      path: 'backup.abvault',
+    );
+    expect(settings.lastWebDavUploadAt, isNull);
+    expect(settings.lastWebDavDownloadAt, isNull);
   });
 
   test('无效或损坏的持久化时间回退到安全默认值', () async {
