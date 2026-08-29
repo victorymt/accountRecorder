@@ -29,26 +29,8 @@ class AccountDetailPage extends StatefulWidget {
 }
 
 class _AccountDetailPageState extends State<AccountDetailPage> {
-  Timer? _totpTimer;
-  DateTime _now = DateTime.now();
   bool _showPassword = false;
   bool _deleting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.account.totp != null) {
-      _totpTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() => _now = DateTime.now());
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _totpTimer?.cancel();
-    super.dispose();
-  }
 
   Future<void> _copyUsername() async {
     if (widget.account.username.isEmpty) return;
@@ -223,7 +205,7 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
           ],
           if (account.totp case final totp?) ...[
             const Divider(height: 1),
-            _TotpDetailField(config: totp, now: _now, onCopy: _copyTotpCode),
+            _TotpDetailField(config: totp, onCopy: _copyTotpCode),
           ],
           if (account.extra.isNotEmpty) ...[
             const Divider(height: 1),
@@ -235,21 +217,40 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
   }
 }
 
-class _TotpDetailField extends StatelessWidget {
-  const _TotpDetailField({
-    required this.config,
-    required this.now,
-    required this.onCopy,
-  });
+class _TotpDetailField extends StatefulWidget {
+  const _TotpDetailField({required this.config, required this.onCopy});
 
   final TotpConfig config;
-  final DateTime now;
   final VoidCallback onCopy;
 
   @override
+  State<_TotpDetailField> createState() => _TotpDetailFieldState();
+}
+
+class _TotpDetailFieldState extends State<_TotpDetailField> {
+  late DateTime _now;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final remaining = config.remainingSeconds(now);
-    final code = formatTotpCode(config.codeAt(now));
+    final config = widget.config;
+    final remaining = config.remainingSeconds(_now);
+    final code = formatTotpCode(config.codeAt(_now));
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 18),
       child: Row(
@@ -302,7 +303,7 @@ class _TotpDetailField extends StatelessWidget {
           ),
           IconButton(
             tooltip: '复制验证码',
-            onPressed: onCopy,
+            onPressed: widget.onCopy,
             icon: const Icon(Icons.copy_outlined),
           ),
         ],
