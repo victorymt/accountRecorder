@@ -18,7 +18,7 @@ void main() {
                 context,
                 onChangePassword: (currentPassword, newPassword) async {
                   attempts++;
-                  if (currentPassword != 'CorrectPass123') return false;
+                  if (currentPassword != '111111') return false;
                   acceptedCurrentPassword = currentPassword;
                   acceptedNewPassword = newPassword;
                   return true;
@@ -33,35 +33,30 @@ void main() {
 
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.widgetWithText(TextField, '当前主密码'),
-      'WrongPass123',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextField, '新主密码'),
-      'NewPassword456',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextField, '确认新主密码'),
-      'NewPassword456',
-    );
-    await tester.tap(find.text('修改'));
+    expect(find.byType(TextField), findsNothing);
+    Future<void> tapPin(String pin) async {
+      for (final digit in pin.split('')) {
+        await tester.tap(find.text(digit).first);
+      }
+    }
+
+    await tapPin('123456');
+    await tapPin('654321');
+    await tapPin('654321');
     await tester.pumpAndSettle();
 
     expect(attempts, 1);
     expect(find.text('当前主密码错误'), findsOneWidget);
     expect(find.text('修改主密码'), findsOneWidget);
 
-    await tester.enterText(
-      find.widgetWithText(TextField, '当前主密码'),
-      'CorrectPass123',
-    );
-    await tester.tap(find.text('修改'));
+    await tapPin('111111');
+    await tapPin('222222');
+    await tapPin('222222');
     await tester.pumpAndSettle();
 
     expect(attempts, 2);
-    expect(acceptedCurrentPassword, 'CorrectPass123');
-    expect(acceptedNewPassword, 'NewPassword456');
+    expect(acceptedCurrentPassword, '111111');
+    expect(acceptedNewPassword, '222222');
     expect(find.text('修改主密码'), findsNothing);
   });
 }

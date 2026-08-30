@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "27ceac2e4248ff069084329c975d0f18fdf5431a",
-    "indexed_at": "2026-08-29T14:36:52Z",
+    "commit": "dfdb9ece31b59bbed8621ed9135ad384f5c6f48f",
+    "indexed_at": "2026-08-30T13:58:35Z",
     "project": "data-project-android-p-accountRecorder",
-    "nodes": 734,
-    "edges": 2501,
-    "original_size": 2752512,
-    "compressed_size": 353402,
-    "compression_level": 9
+    "nodes": 777,
+    "edges": 2610,
+    "original_size": 4063232,
+    "compressed_size": 478149,
+    "compression_level": 3
 }

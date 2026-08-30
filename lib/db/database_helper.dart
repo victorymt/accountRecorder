@@ -275,7 +275,10 @@ class DatabaseHelper {
     String currentPassword,
     String newPassword,
   ) async {
-    if (newPassword.length < 8) {
+    // The UI uses a fixed six-digit PIN. Keep accepting the older password
+    // format (eight or more characters) for callers outside the UI.
+    if (newPassword.length < 6 ||
+        (newPassword.length > 6 && newPassword.length < 8)) {
       throw ArgumentError.value(newPassword, 'newPassword');
     }
     final activeKey = _vaultKey;
